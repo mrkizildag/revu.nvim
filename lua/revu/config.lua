@@ -4,6 +4,11 @@ M.defaults = {
   --- Revision to diff against. "HEAD" reviews uncommitted work; "main...HEAD" the branch.
   rev = "HEAD",
 
+  --- Include files git does not track yet. On by default because agents create new files
+  --- constantly and a review that hides them is worse than useless. Ignored automatically
+  --- for commit ranges, where an untracked file belongs to neither side.
+  untracked = true,
+
   --- Inline +/- drawn before each line. This is virtual text, not buffer content: it
   --- renders like a real diff but cannot be selected, yanked or edited, and the code stays
   --- copyable on its own. Context gets a blank of equal width so everything lines up.
