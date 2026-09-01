@@ -18,8 +18,18 @@ hand the result to Claude Code or Codex as a file it can act on.
 | Command | Does |
 | --- | --- |
 | `:Revu [rev]` | Review changes against `rev` (default `HEAD`; try `main...HEAD`) |
-| `:RevuNext` / `:RevuPrev` | Cycle changed files |
-| `:RevuClose` | Close the review tab |
+| `:RevuNext` / `:RevuPrev` | Jump to the next / previous file header |
+| `:RevuClose` | Close the review and restore the previous buffer |
+
+Every changed file lands in **one scrolling buffer**, opened in the window you are already
+in. Inside it:
+
+| Key | Does |
+| --- | --- |
+| `<Tab>` / `za` | Fold the file section under the cursor |
+| `]f` / `[f` | Next / previous file |
+| `<CR>` / `gf` | Open the real file at this line |
+| `q` | Close |
 
 `+` and `-` are drawn as **inline virtual text**, so the view reads like a normal diff while
 the buffer still holds only source. Yanking a line gives back real code, not diff

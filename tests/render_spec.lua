@@ -157,3 +157,216 @@ describe("render.source_line", function()
     assert.is_nil((render.source_line(render.unified(FILE), 99)))
   end)
 end)
+
+describe("render.review", function()
+  local A = parse(
+    "diff --git a/a.lua b/a.lua",
+    "--- a/a.lua",
+    "+++ b/a.lua",
+    "@@ -1,2 +1,2 @@",
+    " keep",
+    "-old",
+    "+new"
+  )
+  local B = parse(
+    "diff --git a/b.lua b/b.lua",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/b.lua",
+    "@@ -0,0 +1 @@",
+    "+fresh"
+  )
+
+  it("puts a three-row pill above each file", function()
+    local r = render.review({ A, B })
+    for row = 1, 3 do
+      assert.equals("header", r.rows[row].kind)
+      assert.equals("a.lua", r.rows[row].path)
+    end
+    -- the name lives on the middle row; rows 1 and 3 are borders
+    assert.is_truthy(r.lines[2]:find("a.lua", 1, true))
+    assert.is_nil(r.lines[1]:find("a.lua", 1, true))
+
+    local second = render.header_row(r, 2)
+    assert.equals("b.lua", r.rows[second].path)
+    assert.is_truthy(r.lines[second]:find("b.lua", 1, true))
+  end)
+
+  it("tags every row with its file so a cursor row resolves to a path", function()
+    local r = render.review({ A, B })
+    for _, row in ipairs(r.rows) do
+      assert.is_truthy(row.path)
+      assert.is_truthy(row.file_index)
+    end
+  end)
+
+  it("offsets marks and hunk headers into whole-review coordinates", function()
+    local r = render.review({ A, B })
+    for _, m in ipairs(r.marks) do
+      assert.is_true(m.row < #r.lines)
+    end
+    for _, v in ipairs(r.virt) do
+      assert.is_true(v.row < #r.lines, "hunk header must point at a real row")
+      assert.are_not.equals("header", r.rows[v.row + 1].kind)
+    end
+  end)
+
+  it("omits the body of a collapsed file but keeps its header", function()
+    local full = render.review({ A, B })
+    local folded = render.review({ A, B }, { ["a.lua"] = true })
+
+    assert.is_true(#folded.lines < #full.lines)
+    assert.equals("header", folded.rows[1].kind)
+    assert.equals("a.lua", folded.rows[1].path)
+    assert.equals("header", folded.rows[2].kind, "b.lua header should follow immediately")
+  end)
+
+  it("shows the collapsed chevron only when folded", function()
+    local cfg = require("revu.config").options.header
+    assert.is_truthy(render.header_lines(A, false, 80)[2].text:find(cfg.expanded, 1, true))
+    assert.is_truthy(render.header_lines(A, true, 80)[2].text:find(cfg.collapsed, 1, true))
+  end)
+
+  it("counts additions and deletions per file", function()
+    local adds, dels = render.stat(A)
+    assert.equals(1, adds)
+    assert.equals(1, dels)
+    assert.is_truthy(render.header_lines(A, false, 80)[2].text:find("+1", 1, true))
+  end)
+
+  it("labels a binary file instead of counting lines", function()
+    local bin = parse(
+      "diff --git a/x.png b/x.png",
+      "index 1..2 100644",
+      "Binary files a/x.png and b/x.png differ"
+    )
+    assert.is_truthy(render.header_lines(bin, false, 80)[2].text:find("binary", 1, true))
+  end)
+end)
+
+describe("render.header_lines", function()
+  local NESTED = parse(
+    "diff --git a/lua/revu/ui/render.lua b/lua/revu/ui/render.lua",
+    "--- a/lua/revu/ui/render.lua",
+    "+++ b/lua/revu/ui/render.lua",
+    "@@ -1,2 +1,3 @@",
+    " keep",
+    "-old",
+    "+new"
+  )
+
+  it("is a three-line box", function()
+    local h = render.header_lines(NESTED, false, 80)
+    assert.equals(3, #h)
+    local b = require("revu.config").options.header.borderchars
+    assert.is_truthy(h[1].text:find("^" .. b[5]))
+    assert.is_truthy(h[1].text:find(b[6] .. "$"))
+    assert.is_truthy(h[3].text:find("^" .. b[8]))
+    assert.is_truthy(h[3].text:find(b[7] .. "$"))
+    assert.is_truthy(h[2].text:find("^" .. b[4]), "content row starts with a side border")
+    assert.is_truthy(h[2].text:find(b[2] .. "$"), "content row ends with a side border")
+  end)
+
+  it("fills the given width exactly on every row", function()
+    for _, w in ipairs({ 60, 80, 120, 200 }) do
+      for i, line in ipairs(render.header_lines(NESTED, false, w)) do
+        assert.equals(w, vim.fn.strdisplaywidth(line.text), ("width %d, row %d"):format(w, i))
+      end
+    end
+  end)
+
+  it("puts the path on the left and the counts on the right", function()
+    local content = render.header_lines(NESTED, false, 100)[2].text
+    local name_at = content:find("render.lua", 1, true)
+    local add_at = content:find("+1", 1, true)
+    assert.is_true(name_at < add_at, "filename should come before the counts")
+    assert.is_true(add_at > 60, "counts should sit against the right edge")
+  end)
+
+  it("does not break when the window is narrower than the content", function()
+    local h = render.header_lines(NESTED, false, 12)
+    assert.equals(3, #h)
+    assert.is_truthy(h[2].text:find("render.lua", 1, true))
+  end)
+
+  it("colours the directory, filename and counts separately", function()
+    local content = render.header_lines(NESTED, false, 100)[2]
+    local by_hl = {}
+    for _, seg in ipairs(content.segments) do
+      by_hl[seg.hl] = content.text:sub(seg.col + 1, seg.end_col)
+    end
+    assert.equals("lua/revu/ui/", by_hl.RevuHeaderDir)
+    assert.equals("render.lua", by_hl.RevuHeaderName)
+    assert.is_truthy(by_hl.RevuHeaderAdd:find("+1", 1, true))
+    assert.is_truthy(by_hl.RevuHeaderDelete:find("−1", 1, true))
+  end)
+
+  it("omits the directory segment for a top-level file", function()
+    local top = parse(
+      "diff --git a/init.lua b/init.lua",
+      "--- a/init.lua",
+      "+++ b/init.lua",
+      "@@ -1 +1 @@",
+      "-a",
+      "+b"
+    )
+    for _, seg in ipairs(render.header_lines(top, false, 100)[2].segments) do
+      assert.are_not.equals("RevuHeaderDir", seg.hl)
+    end
+  end)
+
+  it("keeps segment offsets inside their row", function()
+    for _, line in ipairs(render.header_lines(NESTED, false, 100)) do
+      for _, seg in ipairs(line.segments) do
+        assert.is_true(seg.col >= 0 and seg.end_col <= #line.text, seg.hl .. " out of range")
+      end
+    end
+  end)
+end)
+
+describe("cursor landing", function()
+  -- top, body, bottom, then two diff rows, then another pill
+  local ROWS = {
+    { kind = "header", part = "top" },
+    { kind = "header", part = "body" },
+    { kind = "header", part = "bottom" },
+    { kind = "context" },
+    { kind = "add" },
+    { kind = "header", part = "top" },
+    { kind = "header", part = "body" },
+    { kind = "header", part = "bottom" },
+  }
+
+  it("allows diff rows and the pill's content row only", function()
+    assert.is_false(render.is_landable(ROWS[1]))
+    assert.is_true(render.is_landable(ROWS[2]))
+    assert.is_false(render.is_landable(ROWS[3]))
+    assert.is_true(render.is_landable(ROWS[4]))
+    assert.is_true(render.is_landable(ROWS[5]))
+    assert.is_false(render.is_landable(nil))
+  end)
+
+  it("continues downward when travelling down onto a border", function()
+    assert.equals(2, render.next_landable(ROWS, 1, 1))
+    assert.equals(4, render.next_landable(ROWS, 3, 1))
+    assert.equals(7, render.next_landable(ROWS, 6, 1))
+  end)
+
+  it("continues upward when travelling up onto a border", function()
+    assert.equals(5, render.next_landable(ROWS, 6, -1))
+    assert.equals(7, render.next_landable(ROWS, 8, -1))
+    assert.equals(2, render.next_landable(ROWS, 3, -1))
+  end)
+
+  it("turns around rather than parking on a border at either end", function()
+    -- row 1 is a border and there is nothing above it
+    assert.equals(2, render.next_landable(ROWS, 1, -1))
+    -- row 8 is a border and there is nothing below it
+    assert.equals(7, render.next_landable(ROWS, 8, 1))
+  end)
+
+  it("returns nil when nothing at all is landable", function()
+    local all_borders = { { kind = "header", part = "top" }, { kind = "header", part = "bottom" } }
+    assert.is_nil(render.next_landable(all_borders, 1, 1))
+  end)
+end)

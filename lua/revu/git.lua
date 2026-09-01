@@ -94,6 +94,26 @@ function M.compares_worktree(rev)
   return not rev:find("%.%.")
 end
 
+---The branch this one most likely forked from: the upstream's base if there is one, else
+---whichever of main/master exists. Used only to suggest a better command, never to change
+---what a given revision means.
+---@param cwd string
+---@return string|nil
+function M.default_base(cwd)
+  local head = run({ "rev-parse", "--abbrev-ref", "HEAD" }, cwd)
+  head = head and vim.trim(head) or nil
+
+  for _, candidate in ipairs({ "main", "master" }) do
+    if candidate ~= head then
+      local ok = run({ "rev-parse", "--verify", "--quiet", candidate }, cwd, { 1 })
+      if ok and vim.trim(ok) ~= "" then
+        return candidate
+      end
+    end
+  end
+  return nil
+end
+
 ---Untracked, non-ignored files, repo-relative.
 ---
 ---`-uall` matters: the default collapses a new directory to `sub/` rather than listing

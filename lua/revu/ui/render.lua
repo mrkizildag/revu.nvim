@@ -19,14 +19,16 @@ local config = require("revu.config")
 local M = {}
 
 ---@class revu.RenderRow
----@field kind "context"|"add"|"del"
+---@field kind "header"|"context"|"add"|"del"
+---@field path string|nil        file the row belongs to
+---@field file_index integer|nil index into the review's file list
 ---@field old_line integer|nil
 ---@field new_line integer|nil
 
 ---@class revu.Render
 ---@field lines string[]                                        buffer contents
 ---@field rows revu.RenderRow[]                                 parallel to `lines`
----@field marks { row: integer, line_hl: string?, sign_text: string?, sign_hl: string?, prefix_text: string?, prefix_hl: string? }[]
+---@field marks { row: integer, line_hl: string?, sign_text: string?, sign_hl: string?, prefix_text: string?, prefix_hl: string?, segments: table[]? }[]
 ---@field virt { row: integer, text: string, hl: string }[]     hunk headers, drawn above `row`
 ---@field binary boolean
 
@@ -99,6 +101,202 @@ function M.unified(file)
   end
 
   return out
+end
+
+---Added and removed line counts for a file.
+---@param file revu.File
+---@return integer adds, integer dels
+function M.stat(file)
+  local adds, dels = 0, 0
+  for _, h in ipairs(file.hunks) do
+    for _, l in ipairs(h.lines) do
+      if l.kind == "add" then
+        adds = adds + 1
+      elseif l.kind == "del" then
+        dels = dels + 1
+      end
+    end
+  end
+  return adds, dels
+end
+
+---@class revu.HeaderLine
+---@field text string
+---@field segments { col: integer, end_col: integer, hl: string }[]
+
+---The pill introducing a file: a bordered box spanning the window, with the path on the
+---left of the middle row and the counts on the right.
+---
+---Three real buffer lines rather than one, and real rather than virtual, because the
+---cursor has to be able to land on the pill to fold the section and virtual text cannot be
+---navigated to. A single line needs several colours -- dimmed directory, bright filename,
+---green additions, red deletions -- which is why each row carries byte-offset segments
+---instead of one line highlight.
+---@param file revu.File
+---@param collapsed boolean
+---@param width integer
+---@return revu.HeaderLine[]  exactly three: top, content, bottom
+function M.header_lines(file, collapsed, width)
+  local h = config.options.header
+  local b = h.borderchars
+  local top, right, bottom, left, tl, tr, br, bl = b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8]
+
+  local inner = math.max(width - vim.fn.strdisplaywidth(left) - vim.fn.strdisplaywidth(right), 1)
+
+  local dir, name = file.path:match("^(.*/)([^/]+)$")
+  dir, name = dir or "", name or file.path
+
+  ---@type { [1]: string, [2]: string|nil }[]
+  local lead = {
+    { " ", nil },
+    { collapsed and h.collapsed or h.expanded, "RevuHeaderChevron" },
+    { " ", nil },
+    { dir, "RevuHeaderDir" },
+    { name, "RevuHeaderName" },
+  }
+  local tail = file.binary and { { "binary", "RevuHeaderStat" }, { " ", nil } }
+    or {
+      { "+" .. select(1, M.stat(file)), "RevuHeaderAdd" },
+      { "  ", nil },
+      { "−" .. select(2, M.stat(file)), "RevuHeaderDelete" },
+      { " ", nil },
+    }
+
+  local function width_of(pieces)
+    local w = 0
+    for _, piece in ipairs(pieces) do
+      w = w + vim.fn.strdisplaywidth(piece[1])
+    end
+    return w
+  end
+
+  -- Counts sit against the right edge; the gap absorbs whatever is left over. A window too
+  -- narrow for both collapses the gap to a single space rather than breaking the box.
+  local gap = math.max(inner - width_of(lead) - width_of(tail), 1)
+
+  local content, segments = left, { { col = 0, end_col = #left, hl = "RevuHeaderBorder" } }
+  local function append(pieces)
+    for _, piece in ipairs(pieces) do
+      if piece[2] and piece[1] ~= "" then
+        segments[#segments + 1] = { col = #content, end_col = #content + #piece[1], hl = piece[2] }
+      end
+      content = content .. piece[1]
+    end
+  end
+
+  append(lead)
+  content = content .. (" "):rep(gap)
+  append(tail)
+  segments[#segments + 1] = { col = #content, end_col = #content + #right, hl = "RevuHeaderBorder" }
+  content = content .. right
+
+  local function border(l, fill, r)
+    local text = l .. fill:rep(inner) .. r
+    return { text = text, segments = { { col = 0, end_col = #text, hl = "RevuHeaderBorder" } } }
+  end
+
+  return {
+    border(tl, top, tr),
+    { text = content, segments = segments },
+    border(bl, bottom, br),
+  }
+end
+
+---Render a whole review: every file in one buffer, each behind a header row.
+---@param files revu.File[]
+---@param collapsed table<string, boolean>|nil  paths that are folded shut
+---@param width integer|nil  window width the header pills should fill
+---@return revu.Render
+function M.review(files, collapsed, width)
+  collapsed = collapsed or {}
+  width = width or 80
+  local out = { lines = {}, rows = {}, marks = {}, virt = {}, binary = false }
+
+  for index, file in ipairs(files) do
+    local is_collapsed = collapsed[file.path] == true
+
+    -- Three rows per pill, all tagged `header` so folding works from any of them. `part`
+    -- distinguishes the content row from its borders, which is what lets the cursor skip
+    -- the borders and what header_row aims at.
+    local parts = { "top", "body", "bottom" }
+    for i, hl_line in ipairs(M.header_lines(file, is_collapsed, width)) do
+      table.insert(out.lines, hl_line.text)
+      table.insert(out.rows, {
+        kind = "header",
+        part = parts[i],
+        path = file.path,
+        file_index = index,
+      })
+      table.insert(out.marks, { row = #out.lines - 1, segments = hl_line.segments })
+    end
+
+    if not is_collapsed then
+      local body = M.unified(file)
+      local offset = #out.lines
+
+      for i, line in ipairs(body.lines) do
+        table.insert(out.lines, line)
+        local r = vim.tbl_extend("force", body.rows[i], { path = file.path, file_index = index })
+        table.insert(out.rows, r)
+      end
+      for _, m in ipairs(body.marks) do
+        table.insert(out.marks, vim.tbl_extend("force", m, { row = m.row + offset }))
+      end
+      for _, v in ipairs(body.virt) do
+        table.insert(out.virt, vim.tbl_extend("force", v, { row = v.row + offset }))
+      end
+    end
+  end
+
+  return out
+end
+
+---Buffer row to put the cursor on for `file_index`: the middle row of the pill, where the
+---filename is, rather than its top border.
+---@param render revu.Render
+---@param file_index integer
+---@return integer|nil
+function M.header_row(render, file_index)
+  for i, r in ipairs(render.rows) do
+    if r.kind == "header" and r.file_index == file_index and r.part == "body" then
+      return i
+    end
+  end
+  return nil
+end
+
+---The nearest row the cursor may rest on, searching from `from` in `dir`, turning around
+---at the end rather than giving up -- a pill at the very top or bottom of the buffer would
+---otherwise leave the cursor parked on a border.
+---
+---Pure and separate from the autocmd that calls it, because this is the part with the edge
+---cases and `CursorMoved` cannot be driven from a headless test.
+---@param rows revu.RenderRow[]
+---@param from integer  1-based
+---@param dir 1|-1      direction of travel
+---@return integer|nil
+function M.next_landable(rows, from, dir)
+  local function seek(start, step)
+    local i = start
+    while rows[i] and not M.is_landable(rows[i]) do
+      i = i + step
+    end
+    return rows[i] and i or nil
+  end
+  return seek(from, dir) or seek(from, -dir)
+end
+
+---Whether the cursor should be allowed to rest on a row.
+---
+---Pill borders are decoration; there is nothing to do while sitting on one, and stopping
+---there on the way past just costs an extra keypress.
+---@param row revu.RenderRow|nil
+---@return boolean
+function M.is_landable(row)
+  if not row then
+    return false
+  end
+  return row.kind ~= "header" or row.part == "body"
 end
 
 ---Source line a buffer row refers to, preferring the new side.

@@ -9,6 +9,17 @@ M.defaults = {
   --- for commit ranges, where an untracked file belongs to neither side.
   untracked = true,
 
+  --- Full-width pill introducing each file. A real buffer line, not virtual text: the
+  --- cursor has to land on it to toggle the section, and virtual text cannot be navigated
+  --- to. Segments are coloured individually, so the path dims and the counts go green/red.
+  header = {
+    expanded = "▾",
+    collapsed = "▸",
+    --- Telescope's ordering, so a borderchars set can be lifted straight from a theme:
+    --- { top, right, bottom, left, top-left, top-right, bottom-right, bottom-left }
+    borderchars = { "─", "│", "─", "│", "╭", "╮", "╯", "╰" },
+  },
+
   --- Inline +/- drawn before each line. This is virtual text, not buffer content: it
   --- renders like a real diff but cannot be selected, yanked or edited, and the code stays
   --- copyable on its own. Context gets a blank of equal width so everything lines up.
@@ -33,6 +44,15 @@ M.defaults = {
     RevuAddPrefix = "DiffAdd",
     RevuDeletePrefix = "DiffDelete",
     RevuHunk = "Comment",
+    -- `Added`/`Removed` are the semantic foreground green and red, unlike DiffAdd and
+    -- DiffDelete which are backgrounds meant for whole lines.
+    RevuHeaderBorder = "FloatBorder",
+    RevuHeaderChevron = "Special",
+    RevuHeaderDir = "Comment",
+    RevuHeaderName = "Title",
+    RevuHeaderAdd = "Added",
+    RevuHeaderDelete = "Removed",
+    RevuHeaderStat = "Comment",
   },
 }
 
