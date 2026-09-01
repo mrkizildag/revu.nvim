@@ -25,8 +25,15 @@ end
 ---@param buf integer
 local function draw(buf)
   local s = sessions[buf]
+  -- Size to the TEXT area, not the window: `textoff` is exactly the columns taken by the
+  -- sign, number and fold columns, and a pill sized to the full window overflows by that
+  -- much and wraps off the right edge.
   local win = vim.fn.bufwinid(buf)
-  local width = win ~= -1 and vim.api.nvim_win_get_width(win) or vim.o.columns
+  local width = vim.o.columns
+  if win ~= -1 then
+    local info = vim.fn.getwininfo(win)[1]
+    width = vim.api.nvim_win_get_width(win) - (info and info.textoff or 0)
+  end
   local r = render.review(s.files, s.collapsed, width)
   s.render = r
 
@@ -124,31 +131,33 @@ function M.open(rev, cwd)
     prev_buf = vim.api.nvim_buf_is_valid(prev_buf) and prev_buf or nil,
   }
 
+  -- Window first, then draw. The pill is sized to the window's text area, and until the
+  -- buffer is actually displayed there is no window to measure -- an earlier draw fell back
+  -- to `columns` and overflowed by the width of the sign column.
+  vim.api.nvim_win_set_buf(vim.api.nvim_get_current_win(), buf)
+  vim.wo.number = false
+  vim.wo.signcolumn = "yes"
+  vim.wo.wrap = false
+  vim.wo.cursorline = true
+
   draw(buf)
   set_keymaps(buf)
 
-  -- Header pills are sized to the window, so they have to be rebuilt when it changes.
+  -- Pills are sized to the window, so they have to be rebuilt when it changes.
   vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {
     group = vim.api.nvim_create_augroup("revu-resize-" .. buf, { clear = true }),
     callback = function()
       if not sessions[buf] or not vim.api.nvim_buf_is_valid(buf) then
         return true -- delete the autocmd
       end
-      local cursor = vim.fn.bufwinid(buf) ~= -1
-          and vim.api.nvim_win_get_cursor(vim.fn.bufwinid(buf))
-        or nil
+      local win = vim.fn.bufwinid(buf)
+      local cursor = win ~= -1 and vim.api.nvim_win_get_cursor(win) or nil
       draw(buf)
       if cursor then
-        pcall(vim.api.nvim_win_set_cursor, vim.fn.bufwinid(buf), cursor)
+        pcall(vim.api.nvim_win_set_cursor, win, cursor)
       end
     end,
   })
-
-  vim.api.nvim_win_set_buf(vim.api.nvim_get_current_win(), buf)
-  vim.wo.number = false
-  vim.wo.signcolumn = "yes"
-  vim.wo.wrap = false
-  vim.wo.cursorline = true
 
   return true, nil
 end

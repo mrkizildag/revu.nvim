@@ -62,22 +62,44 @@ describe("view.open", function()
 
   it("puts every changed file in one buffer", function()
     view.open("HEAD", dir)
-    local headers = 0
+    local seen = {}
     for _, r in ipairs(view.session().render.rows) do
       if r.kind == "header" then
-        headers = headers + 1
+        seen[r.path] = (seen[r.path] or 0) + 1
       end
     end
-    assert.equals(#view.session().files, headers)
-    assert.is_true(headers >= 2)
+    assert.equals(#view.session().files, vim.tbl_count(seen))
+    assert.is_true(vim.tbl_count(seen) >= 2)
+    for path, rows in pairs(seen) do
+      assert.equals(3, rows, path .. " should have a three-row pill")
+    end
   end)
 
-  it("renders a header row with a chevron, path and stat", function()
+  it("sizes the pill to the text area, not the window", function()
     view.open("HEAD", dir)
-    local first = lines()[1]
-    assert.is_truthy(first:find("▾", 1, true), "expanded chevron")
-    assert.is_truthy(first:find("╭─", 1, true), "rounded corner")
-    assert.is_truthy(first:find("%+%d"), "add count")
+    local win = vim.api.nvim_get_current_win()
+    local info = vim.fn.getwininfo(win)[1]
+    local usable = vim.api.nvim_win_get_width(win) - info.textoff
+
+    for i, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+      if view.session().render.rows[i].kind == "header" then
+        assert.equals(
+          usable,
+          vim.fn.strdisplaywidth(l),
+          "pill row " .. i .. " must fit the text area"
+        )
+      end
+    end
+  end)
+
+  it("renders a bordered pill with the path left and counts right", function()
+    view.open("HEAD", dir)
+    local l = lines()
+    assert.is_truthy(l[1]:find("^╭"), "top border")
+    assert.is_truthy(l[2]:find("▾", 1, true), "expanded chevron on the content row")
+    assert.is_truthy(l[2]:find("%+%d"), "add count")
+    assert.is_truthy(l[3]:find("^╰"), "bottom border")
+    assert.is_true(l[2]:find("%+%d") > l[2]:find("%.lua"), "counts right of the filename")
   end)
 end)
 
@@ -87,16 +109,16 @@ describe("view.toggle", function()
     view.open("HEAD", dir)
 
     local expanded = #lines()
-    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
     view.toggle()
 
     local collapsed = #lines()
     assert.is_true(collapsed < expanded, "collapsing should remove rows")
-    assert.is_truthy(lines()[1]:find("▸", 1, true), "chevron should flip")
+    assert.is_truthy(lines()[2]:find("▸", 1, true), "chevron should flip")
 
     view.toggle()
     assert.equals(expanded, #lines())
-    assert.is_truthy(lines()[1]:find("▾", 1, true))
+    assert.is_truthy(lines()[2]:find("▾", 1, true))
 
     view.close()
   end)
@@ -104,9 +126,10 @@ describe("view.toggle", function()
   it("keeps the cursor on the header it toggled", function()
     local dir = repo_with_changes()
     view.open("HEAD", dir)
-    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
     view.toggle()
-    assert.equals(1, vim.api.nvim_win_get_cursor(0)[1])
+    -- back on the content row of the pill it toggled, not its top border
+    assert.equals(2, vim.api.nvim_win_get_cursor(0)[1])
     view.close()
   end)
 
@@ -115,7 +138,7 @@ describe("view.toggle", function()
     view.open("HEAD", dir)
 
     local before = #lines()
-    vim.api.nvim_win_set_cursor(0, { 3, 0 }) -- inside the first file's diff
+    vim.api.nvim_win_set_cursor(0, { 5, 0 }) -- inside the first file's diff, past the pill
     view.toggle()
     assert.is_true(#lines() < before)
 
@@ -128,14 +151,14 @@ describe("view.jump_file", function()
     local dir = repo_with_changes()
     view.open("HEAD", dir)
 
-    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
     view.jump_file(1)
     local second = vim.api.nvim_win_get_cursor(0)[1]
-    assert.is_true(second > 1)
+    assert.is_true(second > 2)
     assert.equals("header", view.session().render.rows[second].kind)
 
     view.jump_file(-1)
-    assert.equals(1, vim.api.nvim_win_get_cursor(0)[1])
+    assert.equals(2, vim.api.nvim_win_get_cursor(0)[1])
 
     view.close()
   end)

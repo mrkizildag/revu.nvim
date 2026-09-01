@@ -177,14 +177,19 @@ describe("render.review", function()
     "+fresh"
   )
 
-  it("puts a header row above each file", function()
+  it("puts a three-row pill above each file", function()
     local r = render.review({ A, B })
-    assert.equals("header", r.rows[1].kind)
-    assert.equals("a.lua", r.rows[1].path)
-    assert.is_truthy(r.lines[1]:find("a.lua", 1, true))
+    for row = 1, 3 do
+      assert.equals("header", r.rows[row].kind)
+      assert.equals("a.lua", r.rows[row].path)
+    end
+    -- the name lives on the middle row; rows 1 and 3 are borders
+    assert.is_truthy(r.lines[2]:find("a.lua", 1, true))
+    assert.is_nil(r.lines[1]:find("a.lua", 1, true))
 
     local second = render.header_row(r, 2)
     assert.equals("b.lua", r.rows[second].path)
+    assert.is_truthy(r.lines[second]:find("b.lua", 1, true))
   end)
 
   it("tags every row with its file so a cursor row resolves to a path", function()
@@ -218,15 +223,15 @@ describe("render.review", function()
 
   it("shows the collapsed chevron only when folded", function()
     local cfg = require("revu.config").options.header
-    assert.is_truthy((render.header_line(A, false, 80)):find(cfg.expanded, 1, true))
-    assert.is_truthy((render.header_line(A, true, 80)):find(cfg.collapsed, 1, true))
+    assert.is_truthy(render.header_lines(A, false, 80)[2].text:find(cfg.expanded, 1, true))
+    assert.is_truthy(render.header_lines(A, true, 80)[2].text:find(cfg.collapsed, 1, true))
   end)
 
   it("counts additions and deletions per file", function()
     local adds, dels = render.stat(A)
     assert.equals(1, adds)
     assert.equals(1, dels)
-    assert.is_truthy((render.header_line(A, false, 80)):find("+1", 1, true))
+    assert.is_truthy(render.header_lines(A, false, 80)[2].text:find("+1", 1, true))
   end)
 
   it("labels a binary file instead of counting lines", function()
@@ -235,11 +240,11 @@ describe("render.review", function()
       "index 1..2 100644",
       "Binary files a/x.png and b/x.png differ"
     )
-    assert.is_truthy((render.header_line(bin, false, 80)):find("binary", 1, true))
+    assert.is_truthy(render.header_lines(bin, false, 80)[2].text:find("binary", 1, true))
   end)
 end)
 
-describe("render.header_line", function()
+describe("render.header_lines", function()
   local NESTED = parse(
     "diff --git a/lua/revu/ui/render.lua b/lua/revu/ui/render.lua",
     "--- a/lua/revu/ui/render.lua",
@@ -250,40 +255,50 @@ describe("render.header_line", function()
     "+new"
   )
 
-  it("fills the given width exactly", function()
+  it("is a three-line box", function()
+    local h = render.header_lines(NESTED, false, 80)
+    assert.equals(3, #h)
+    local b = require("revu.config").options.header.borderchars
+    assert.is_truthy(h[1].text:find("^" .. b[5]))
+    assert.is_truthy(h[1].text:find(b[6] .. "$"))
+    assert.is_truthy(h[3].text:find("^" .. b[8]))
+    assert.is_truthy(h[3].text:find(b[7] .. "$"))
+    assert.is_truthy(h[2].text:find("^" .. b[4]), "content row starts with a side border")
+    assert.is_truthy(h[2].text:find(b[2] .. "$"), "content row ends with a side border")
+  end)
+
+  it("fills the given width exactly on every row", function()
     for _, w in ipairs({ 60, 80, 120, 200 }) do
-      local text = render.header_line(NESTED, false, w)
-      assert.equals(w, vim.fn.strdisplaywidth(text), "width " .. w)
+      for i, line in ipairs(render.header_lines(NESTED, false, w)) do
+        assert.equals(w, vim.fn.strdisplaywidth(line.text), ("width %d, row %d"):format(w, i))
+      end
     end
   end)
 
-  it("centres the content", function()
-    local text = render.header_line(NESTED, false, 100)
-    local fill = require("revu.config").options.header.fill
-    local lead = text:match("^╭(" .. fill .. "*)")
-    local tail = text:match("(" .. fill .. "*)╮$")
-    -- allow one cell of slack for an odd amount of padding
-    assert.is_true(math.abs(vim.fn.strdisplaywidth(lead) - vim.fn.strdisplaywidth(tail)) <= 1)
+  it("puts the path on the left and the counts on the right", function()
+    local content = render.header_lines(NESTED, false, 100)[2].text
+    local name_at = content:find("render.lua", 1, true)
+    local add_at = content:find("+1", 1, true)
+    assert.is_true(name_at < add_at, "filename should come before the counts")
+    assert.is_true(add_at > 60, "counts should sit against the right edge")
   end)
 
   it("does not break when the window is narrower than the content", function()
-    local text = render.header_line(NESTED, false, 10)
-    assert.is_truthy(text:find("render.lua", 1, true))
-    assert.is_truthy(text:find("^╭"))
-    assert.is_truthy(text:find("╮$"))
+    local h = render.header_lines(NESTED, false, 12)
+    assert.equals(3, #h)
+    assert.is_truthy(h[2].text:find("render.lua", 1, true))
   end)
 
   it("colours the directory, filename and counts separately", function()
-    local text, segs = render.header_line(NESTED, false, 100)
+    local content = render.header_lines(NESTED, false, 100)[2]
     local by_hl = {}
-    for _, s in ipairs(segs) do
-      by_hl[s.hl] = text:sub(s.col + 1, s.end_col)
+    for _, seg in ipairs(content.segments) do
+      by_hl[seg.hl] = content.text:sub(seg.col + 1, seg.end_col)
     end
     assert.equals("lua/revu/ui/", by_hl.RevuHeaderDir)
     assert.equals("render.lua", by_hl.RevuHeaderName)
     assert.is_truthy(by_hl.RevuHeaderAdd:find("+1", 1, true))
     assert.is_truthy(by_hl.RevuHeaderDelete:find("−1", 1, true))
-    assert.equals(text, by_hl.RevuHeaderBorder, "border segment should span the pill")
   end)
 
   it("omits the directory segment for a top-level file", function()
@@ -295,16 +310,16 @@ describe("render.header_line", function()
       "-a",
       "+b"
     )
-    local _, segs = render.header_line(top, false, 100)
-    for _, s in ipairs(segs) do
-      assert.are_not.equals("RevuHeaderDir", s.hl)
+    for _, seg in ipairs(render.header_lines(top, false, 100)[2].segments) do
+      assert.are_not.equals("RevuHeaderDir", seg.hl)
     end
   end)
 
-  it("keeps segment offsets inside the text", function()
-    local text, segs = render.header_line(NESTED, false, 100)
-    for _, s in ipairs(segs) do
-      assert.is_true(s.col >= 0 and s.end_col <= #text, s.hl .. " out of range")
+  it("keeps segment offsets inside their row", function()
+    for _, line in ipairs(render.header_lines(NESTED, false, 100)) do
+      for _, seg in ipairs(line.segments) do
+        assert.is_true(seg.col >= 0 and seg.end_col <= #line.text, seg.hl .. " out of range")
+      end
     end
   end)
 end)

@@ -120,60 +120,86 @@ function M.stat(file)
   return adds, dels
 end
 
----The pill introducing a file: a full-width rounded bar with the path centred and the
----counts beside it.
+---@class revu.HeaderLine
+---@field text string
+---@field segments { col: integer, end_col: integer, hl: string }[]
+
+---The pill introducing a file: a bordered box spanning the window, with the path on the
+---left of the middle row and the counts on the right.
 ---
----Returns byte-offset segments alongside the text, because a single buffer line needs
----several colours -- dimmed directory, bright filename, green additions, red deletions --
----and that is done with ranged extmarks rather than one line highlight.
+---Three real buffer lines rather than one, and real rather than virtual, because the
+---cursor has to be able to land on the pill to fold the section and virtual text cannot be
+---navigated to. A single line needs several colours -- dimmed directory, bright filename,
+---green additions, red deletions -- which is why each row carries byte-offset segments
+---instead of one line highlight.
 ---@param file revu.File
 ---@param collapsed boolean
----@param width integer  window width to fill
----@return string text, { col: integer, end_col: integer, hl: string }[] segments
-function M.header_line(file, collapsed, width)
+---@param width integer
+---@return revu.HeaderLine[]  exactly three: top, content, bottom
+function M.header_lines(file, collapsed, width)
   local h = config.options.header
-  local adds, dels = M.stat(file)
+  local b = h.borderchars
+  local top, right, bottom, left, tl, tr, br, bl = b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8]
+
+  local inner = math.max(width - vim.fn.strdisplaywidth(left) - vim.fn.strdisplaywidth(right), 1)
 
   local dir, name = file.path:match("^(.*/)([^/]+)$")
   dir, name = dir or "", name or file.path
 
   ---@type { [1]: string, [2]: string|nil }[]
-  local pieces = {
-    { (collapsed and h.collapsed or h.expanded) .. "  ", "RevuHeaderChevron" },
+  local lead = {
+    { " ", nil },
+    { collapsed and h.collapsed or h.expanded, "RevuHeaderChevron" },
+    { " ", nil },
     { dir, "RevuHeaderDir" },
     { name, "RevuHeaderName" },
   }
-  if file.binary then
-    pieces[#pieces + 1] = { "   binary", "RevuHeaderStat" }
-  else
-    pieces[#pieces + 1] = { "   +" .. adds, "RevuHeaderAdd" }
-    pieces[#pieces + 1] = { "  −" .. dels, "RevuHeaderDelete" }
-  end
+  local tail = file.binary and { { "binary", "RevuHeaderStat" }, { " ", nil } }
+    or {
+      { "+" .. select(1, M.stat(file)), "RevuHeaderAdd" },
+      { "  ", nil },
+      { "−" .. select(2, M.stat(file)), "RevuHeaderDelete" },
+      { " ", nil },
+    }
 
-  local content = ""
-  for _, piece in ipairs(pieces) do
-    content = content .. piece[1]
-  end
-
-  -- Pad the two sides so the content sits in the middle. A window narrower than the
-  -- content just gets no padding rather than a broken pill.
-  local slack = width - vim.fn.strdisplaywidth(content) - 4 -- corners + a space each side
-  local left = math.max(math.floor(slack / 2), 0)
-  local right = math.max(slack - left, 0)
-
-  local lead = h.corner_left .. h.fill:rep(left) .. " "
-  local text = lead .. content .. " " .. h.fill:rep(right) .. h.corner_right
-
-  local segments = { { col = 0, end_col = #text, hl = "RevuHeaderBorder" } }
-  local at = #lead
-  for _, piece in ipairs(pieces) do
-    if piece[2] and piece[1] ~= "" then
-      segments[#segments + 1] = { col = at, end_col = at + #piece[1], hl = piece[2] }
+  local function width_of(pieces)
+    local w = 0
+    for _, piece in ipairs(pieces) do
+      w = w + vim.fn.strdisplaywidth(piece[1])
     end
-    at = at + #piece[1]
+    return w
   end
 
-  return text, segments
+  -- Counts sit against the right edge; the gap absorbs whatever is left over. A window too
+  -- narrow for both collapses the gap to a single space rather than breaking the box.
+  local gap = math.max(inner - width_of(lead) - width_of(tail), 1)
+
+  local content, segments = left, { { col = 0, end_col = #left, hl = "RevuHeaderBorder" } }
+  local function append(pieces)
+    for _, piece in ipairs(pieces) do
+      if piece[2] and piece[1] ~= "" then
+        segments[#segments + 1] = { col = #content, end_col = #content + #piece[1], hl = piece[2] }
+      end
+      content = content .. piece[1]
+    end
+  end
+
+  append(lead)
+  content = content .. (" "):rep(gap)
+  append(tail)
+  segments[#segments + 1] = { col = #content, end_col = #content + #right, hl = "RevuHeaderBorder" }
+  content = content .. right
+
+  local function border(l, fill, r)
+    local text = l .. fill:rep(inner) .. r
+    return { text = text, segments = { { col = 0, end_col = #text, hl = "RevuHeaderBorder" } } }
+  end
+
+  return {
+    border(tl, top, tr),
+    { text = content, segments = segments },
+    border(bl, bottom, br),
+  }
 end
 
 ---Render a whole review: every file in one buffer, each behind a header row.
@@ -189,10 +215,12 @@ function M.review(files, collapsed, width)
   for index, file in ipairs(files) do
     local is_collapsed = collapsed[file.path] == true
 
-    local text, segments = M.header_line(file, is_collapsed, width)
-    table.insert(out.lines, text)
-    table.insert(out.rows, { kind = "header", path = file.path, file_index = index })
-    table.insert(out.marks, { row = #out.lines - 1, segments = segments })
+    -- Three rows per pill; all tagged as `header` so folding works from any of them.
+    for _, hl_line in ipairs(M.header_lines(file, is_collapsed, width)) do
+      table.insert(out.lines, hl_line.text)
+      table.insert(out.rows, { kind = "header", path = file.path, file_index = index })
+      table.insert(out.marks, { row = #out.lines - 1, segments = hl_line.segments })
+    end
 
     if not is_collapsed then
       local body = M.unified(file)
@@ -215,14 +243,15 @@ function M.review(files, collapsed, width)
   return out
 end
 
----Buffer row of the header for `file_index`, 1-based. nil if not rendered.
+---Buffer row to put the cursor on for `file_index`: the middle row of the pill, where the
+---filename is, rather than its top border.
 ---@param render revu.Render
 ---@param file_index integer
 ---@return integer|nil
 function M.header_row(render, file_index)
   for i, r in ipairs(render.rows) do
     if r.kind == "header" and r.file_index == file_index then
-      return i
+      return i + 1
     end
   end
   return nil

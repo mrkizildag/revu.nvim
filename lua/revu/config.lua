@@ -15,9 +15,9 @@ M.defaults = {
   header = {
     expanded = "▾",
     collapsed = "▸",
-    corner_left = "╭",
-    corner_right = "╮",
-    fill = "─",
+    --- Telescope's ordering, so a borderchars set can be lifted straight from a theme:
+    --- { top, right, bottom, left, top-left, top-right, bottom-right, bottom-left }
+    borderchars = { "─", "│", "─", "│", "╭", "╮", "╯", "╰" },
   },
 
   --- Inline +/- drawn before each line. This is virtual text, not buffer content: it
