@@ -26,5 +26,10 @@ Tests use [plenary.nvim](https://github.com/nvim-lua/plenary.nvim), resolved fro
 lazy.nvim install:
 
 ```bash
-nvim --headless -c "PlenaryBustedDirectory tests/ {minimal_init='tests/minimal_init.lua'}"
+nvim --headless --noplugin -u tests/minimal_init.lua \
+  -c "PlenaryBustedDirectory tests/ {minimal_init='tests/minimal_init.lua'}"
 ```
+
+`-u` is needed on the parent process too, not just the child test runners — without it
+plenary is missing from the parent's `rtp` and `PlenaryBustedDirectory` is an unknown
+command, which hangs instead of failing.

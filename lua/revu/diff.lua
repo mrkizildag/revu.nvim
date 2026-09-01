@@ -34,7 +34,7 @@ local function strip_prefix(p)
   -- Git quotes paths containing specials as "..."; unquote the simple case.
   local unquoted = p:match('^"(.*)"$')
   if unquoted then
-    p = unquoted:gsub('\\(.)', '%1')
+    p = unquoted:gsub("\\(.)", "%1")
   end
   return (p:gsub("^[ab]/", ""))
 end
@@ -42,8 +42,7 @@ end
 ---@param header string  e.g. "@@ -1,3 +1,4 @@ func foo()"
 ---@return revu.Hunk|nil
 local function parse_hunk_header(header)
-  local old_start, new_start, trailing =
-    header:match("^@@ %-(%d+),?%d* %+(%d+),?%d* @@(.*)$")
+  local old_start, new_start, trailing = header:match("^@@ %-(%d+),?%d* %+(%d+),?%d* @@(.*)$")
   if not old_start then
     return nil
   end

@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.neovim }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # v0.10 is the floor: git.lua uses vim.system, added in 0.10.
+        # nightly catches breakage before it reaches a release.
+        neovim: [v0.10.4, stable, nightly]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: ${{ matrix.neovim }}
+
+      - name: Install plenary
+        run: git clone --depth 1 https://github.com/nvim-lua/plenary.nvim .tests/plenary.nvim
+
+      # -u on the PARENT too, not just the child processes: in CI there is no user
+      # config, so without it plenary is absent from the parent's rtp and
+      # PlenaryBustedDirectory is an unknown command -- which hangs rather than fails.
+      - name: Run tests
+        timeout-minutes: 5
+        run: |
+          nvim --headless --noplugin -u tests/minimal_init.lua \
+            -c "PlenaryBustedDirectory tests/ {minimal_init='tests/minimal_init.lua'}" \
+            < /dev/null
+
+  format:
+    name: stylua
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: JohnnyMorganz/stylua-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: latest
+          args: --check lua/ tests/
