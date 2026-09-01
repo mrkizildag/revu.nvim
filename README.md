@@ -55,14 +55,17 @@ Neovim >= 0.10 (`vim.system`). Developed on 0.12.
 
 ## Development
 
-Tests use [plenary.nvim](https://github.com/nvim-lua/plenary.nvim), resolved from a local
-lazy.nvim install:
-
 ```bash
-nvim --headless --noplugin -u tests/minimal_init.lua \
-  -c "PlenaryBustedDirectory tests/ {minimal_init='tests/minimal_init.lua'}"
+make          # format check, lint, tests -- the same three CI runs
+make test
+make lint     # luacheck
+make format   # stylua, in place
 ```
 
-`-u` is needed on the parent process too, not just the child test runners — without it
-plenary is missing from the parent's `rtp` and `PlenaryBustedDirectory` is an unknown
-command, which hangs instead of failing.
+Tests use [plenary.nvim](https://github.com/nvim-lua/plenary.nvim), cloned into `.tests/` by
+the Makefile. `-u` is needed on the parent nvim process as well as the child test runners —
+without it plenary is missing from the parent's `rtp` and `PlenaryBustedDirectory` is an
+unknown command, which hangs instead of failing.
+
+`stylua` is pinned to the same version in CI as the one you run locally; a newer one can
+reformat code the older accepts and fail CI on a diff you cannot reproduce.

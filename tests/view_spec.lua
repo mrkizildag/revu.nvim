@@ -390,6 +390,45 @@ describe("returning to the review", function()
     assert.equals(before + 1, revu_buffers())
   end)
 
+  it("leaves exactly one jumplist entry for the review when jumping out", function()
+    view.open("HEAD", dir)
+    local rbuf = vim.api.nvim_get_current_buf()
+    vim.api.nvim_win_set_cursor(0, { first_body_row(), 0 })
+
+    view.open_file()
+
+    -- `m'` records one; :edit must not add a second, or <C-o> stutters on the way back.
+    local entries = 0
+    for _, j in ipairs(vim.fn.getjumplist()[1]) do
+      if j.bufnr == rbuf then
+        entries = entries + 1
+      end
+    end
+    assert.equals(1, entries)
+  end)
+
+  it("records the review position before leaving, not after", function()
+    view.open("HEAD", dir)
+    local rbuf = vim.api.nvim_get_current_buf()
+    local row = first_body_row()
+    vim.api.nvim_win_set_cursor(0, { row, 0 })
+
+    view.open_file()
+
+    for _, j in ipairs(vim.fn.getjumplist()[1]) do
+      if j.bufnr == rbuf then
+        assert.equals(row, j.lnum, "the entry must point at the row we left")
+        return
+      end
+    end
+    error("no jumplist entry for the review")
+  end)
+
+  -- Enable once #19 replaces row-removal with real vim folds. Collapsing currently
+  -- rewrites the whole buffer, which destroys vim's position tracking: a jumplist entry
+  -- below the fold is silently clamped, so <C-o> lands on unrelated content.
+  pending("keeps stored positions valid across a fold (needs real folds, #19)")
+
   it("close discards the buffer even when the review is hidden", function()
     view.open("HEAD", dir)
     local rbuf = vim.api.nvim_get_current_buf()
