@@ -1,0 +1,30 @@
+# revu.nvim
+
+In-editor diff review with comments an AI agent can read.
+
+Review a diff without leaving Neovim, annotate lines the way you would on a GitHub PR, and
+hand the result to Claude Code or Codex as a file it can act on.
+
+> **Status: in progress.** The diff model and its test suite are in; the UI is not. Tracking
+> issue: [#1](https://github.com/mrkizildag/revu.nvim/issues/1).
+
+## Planned
+
+- Split (`old | new`) and unified diff views, toggleable like GitHub's
+- Line-anchored comments rendered inline as cards
+- `.revu/comments.json` as the source of truth, `.revu/comments.md` regenerated for the agent
+- A keybind to copy the markdown path to the clipboard
+- Comments re-anchor by content after the agent edits, rather than pointing at stale lines
+
+## Requirements
+
+Neovim >= 0.10 (`vim.system`). Developed on 0.12.
+
+## Development
+
+Tests use [plenary.nvim](https://github.com/nvim-lua/plenary.nvim), resolved from a local
+lazy.nvim install:
+
+```bash
+nvim --headless -c "PlenaryBustedDirectory tests/ {minimal_init='tests/minimal_init.lua'}"
+```
