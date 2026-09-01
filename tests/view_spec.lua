@@ -1,10 +1,10 @@
 local view = require("revu.ui.view")
+local render = require("revu.ui.render")
 
 local function sh(cmd, cwd)
   return vim.system(cmd, { cwd = cwd, text = true }):wait()
 end
 
---- A real git repo with one commit and uncommitted changes.
 local function repo_with_changes()
   local dir = vim.fn.tempname()
   vim.fn.mkdir(dir, "p")
@@ -12,25 +12,17 @@ local function repo_with_changes()
   sh({ "git", "config", "user.email", "t@t" }, dir)
   sh({ "git", "config", "user.name", "t" }, dir)
 
-  vim.fn.writefile(
-    { "local M = {}", "", "function M.go()", "  return 1", "end", "", "return M" },
-    dir .. "/a.lua"
-  )
+  vim.fn.writefile({ "local M = {}", "", "function M.go()", "  return 1", "end" }, dir .. "/a.lua")
   vim.fn.writefile({ "print('b')" }, dir .. "/b.lua")
   sh({ "git", "add", "-A" }, dir)
   sh({ "git", "commit", "-qm", "init" }, dir)
 
-  -- modify one file, add another
-  vim.fn.writefile(
-    { "local M = {}", "", "function M.go()", "  return 2", "end", "", "return M" },
-    dir .. "/a.lua"
-  )
-  vim.fn.writefile({ "print('new file')" }, dir .. "/c.lua")
-  sh({ "git", "add", "-A" }, dir)
+  vim.fn.writefile({ "local M = {}", "", "function M.go()", "  return 2", "end" }, dir .. "/a.lua")
+  vim.fn.writefile({ "print('new')" }, dir .. "/c.lua")
   return dir
 end
 
-local function current_buf_lines()
+local function lines()
   return vim.api.nvim_buf_get_lines(0, 0, -1, false)
 end
 
@@ -39,7 +31,6 @@ describe("view.open", function()
 
   before_each(function()
     require("revu.config").setup({})
-    require("revu.ui.highlights").apply()
     dir = repo_with_changes()
   end)
 
@@ -49,116 +40,140 @@ describe("view.open", function()
     end
   end)
 
-  it("opens a session with every changed file", function()
-    local ok, err = view.open("HEAD", dir)
-    assert.is_true(ok, tostring(err))
-    assert.is_true(view.is_open())
-    assert.equals(2, #view.session().files) -- a.lua modified, c.lua added
+  it("opens in the current window without creating a tab", function()
+    local tabs = #vim.api.nvim_list_tabpages()
+    assert.is_true((view.open("HEAD", dir)))
+    assert.equals(tabs, #vim.api.nvim_list_tabpages())
   end)
 
-  it("creates a scratch buffer that cannot be edited", function()
+  it("remembers the buffer it replaced", function()
+    local before = vim.api.nvim_get_current_buf()
     view.open("HEAD", dir)
-    local buf = vim.api.nvim_get_current_buf()
-    assert.equals("nofile", vim.bo[buf].buftype)
-    assert.equals("wipe", vim.bo[buf].bufhidden)
-    assert.is_false(vim.bo[buf].modifiable)
-    assert.is_false(vim.bo[buf].swapfile)
+    assert.equals(before, view.session().prev_buf)
   end)
 
-  it("sets the filetype from the reviewed path so treesitter attaches", function()
+  it("does not name the buffer like a path", function()
     view.open("HEAD", dir)
-    assert.equals("lua", vim.bo[vim.api.nvim_get_current_buf()].filetype)
+    -- `revu://<rev>/<path>` got shortened to nonsense in the tabline; the review buffer
+    -- carries no name at all now.
+    assert.equals("", vim.api.nvim_buf_get_name(0))
+    assert.equals("revu", vim.bo.filetype)
   end)
 
-  it("puts no diff punctuation in the buffer", function()
+  it("puts every changed file in one buffer", function()
     view.open("HEAD", dir)
-    for _, l in ipairs(current_buf_lines()) do
-      assert.is_nil(l:find("^@@"))
-      assert.is_nil(l:find("^%+%+%+"))
-    end
-  end)
-
-  it("applies line and sign extmarks for changed rows", function()
-    view.open("HEAD", dir)
-    local buf = vim.api.nvim_get_current_buf()
-    local ns = vim.api.nvim_get_namespaces()["revu_diff"]
-    local marks = vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })
-
-    local line_hls, virt = 0, 0
-    for _, m in ipairs(marks) do
-      if m[4].line_hl_group then
-        line_hls = line_hls + 1
-      end
-      if m[4].virt_lines then
-        virt = virt + 1
+    local headers = 0
+    for _, r in ipairs(view.session().render.rows) do
+      if r.kind == "header" then
+        headers = headers + 1
       end
     end
-    assert.is_true(line_hls > 0, "expected add/delete line highlights")
-    assert.is_true(virt > 0, "expected a hunk header as a virtual line")
+    assert.equals(#view.session().files, headers)
+    assert.is_true(headers >= 2)
   end)
 
-  it("draws +/- as inline virtual text, not buffer content", function()
+  it("renders a header row with a chevron, path and stat", function()
     view.open("HEAD", dir)
-    local buf = vim.api.nvim_get_current_buf()
-    local ns = vim.api.nvim_get_namespaces()["revu_diff"]
-
-    local inline = 0
-    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
-      if m[4].virt_text then
-        assert.equals("inline", m[4].virt_text_pos)
-        inline = inline + 1
-      end
-    end
-    assert.is_true(inline > 0, "expected inline +/- prefixes")
-
-    -- The guarantee that matters: the prefix is not in the text, so yanking a line gives
-    -- back real code rather than diff punctuation.
-    for _, l in ipairs(current_buf_lines()) do
-      assert.is_nil(l:find("^[+-] "))
-    end
-  end)
-
-  it("reports an error rather than opening when there are no changes", function()
-    sh({ "git", "commit", "-qam", "all done" }, dir)
-    local ok, err = view.open("HEAD", dir)
-    assert.is_false(ok)
-    assert.is_truthy(err:find("no changes", 1, true))
-    assert.is_false(view.is_open())
-  end)
-
-  it("reports an error outside a git repository", function()
-    local plain = vim.fn.tempname()
-    vim.fn.mkdir(plain, "p")
-    local ok, err = view.open("HEAD", plain)
-    assert.is_false(ok)
-    assert.is_truthy(err)
+    local first = lines()[1]
+    assert.is_truthy(first:find("▾", 1, true), "expanded chevron")
+    assert.is_truthy(first:find("╭─", 1, true), "rounded corner")
+    assert.is_truthy(first:find("%+%d"), "add count")
   end)
 end)
 
-describe("view.cycle", function()
-  it("moves between files and wraps around", function()
+describe("view.toggle", function()
+  it("folds a file section shut and back open", function()
     local dir = repo_with_changes()
     view.open("HEAD", dir)
 
-    local first = view.session().index
-    view.cycle(1)
-    assert.are_not.equals(first, view.session().index)
-    view.cycle(1)
-    assert.equals(first, view.session().index, "should wrap with two files")
+    local expanded = #lines()
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    view.toggle()
+
+    local collapsed = #lines()
+    assert.is_true(collapsed < expanded, "collapsing should remove rows")
+    assert.is_truthy(lines()[1]:find("▸", 1, true), "chevron should flip")
+
+    view.toggle()
+    assert.equals(expanded, #lines())
+    assert.is_truthy(lines()[1]:find("▾", 1, true))
+
+    view.close()
+  end)
+
+  it("keeps the cursor on the header it toggled", function()
+    local dir = repo_with_changes()
+    view.open("HEAD", dir)
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    view.toggle()
+    assert.equals(1, vim.api.nvim_win_get_cursor(0)[1])
+    view.close()
+  end)
+
+  it("toggles from a body row, not just the header", function()
+    local dir = repo_with_changes()
+    view.open("HEAD", dir)
+
+    local before = #lines()
+    vim.api.nvim_win_set_cursor(0, { 3, 0 }) -- inside the first file's diff
+    view.toggle()
+    assert.is_true(#lines() < before)
+
+    view.close()
+  end)
+end)
+
+describe("view.jump_file", function()
+  it("moves between headers and wraps", function()
+    local dir = repo_with_changes()
+    view.open("HEAD", dir)
+
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    view.jump_file(1)
+    local second = vim.api.nvim_win_get_cursor(0)[1]
+    assert.is_true(second > 1)
+    assert.equals("header", view.session().render.rows[second].kind)
+
+    view.jump_file(-1)
+    assert.equals(1, vim.api.nvim_win_get_cursor(0)[1])
 
     view.close()
   end)
 end)
 
 describe("view.close", function()
-  it("drops the session and its tab", function()
+  it("restores the buffer that was there before", function()
     local dir = repo_with_changes()
-    local tabs_before = #vim.api.nvim_list_tabpages()
+    local before = vim.api.nvim_get_current_buf()
     view.open("HEAD", dir)
-    assert.equals(tabs_before + 1, #vim.api.nvim_list_tabpages())
+    assert.are_not.equals(before, vim.api.nvim_get_current_buf())
 
     view.close()
+    assert.equals(before, vim.api.nvim_get_current_buf())
     assert.is_false(view.is_open())
-    assert.equals(tabs_before, #vim.api.nvim_list_tabpages())
+  end)
+end)
+
+describe("view.open_file", function()
+  it("opens the real file at the reviewed line", function()
+    local dir = repo_with_changes()
+    view.open("HEAD", dir)
+
+    -- find a row that maps to a source line in a.lua
+    local target
+    for i, r in ipairs(view.session().render.rows) do
+      if r.path == "a.lua" and r.kind ~= "header" and (r.new_line or r.old_line) then
+        target = i
+        break
+      end
+    end
+    assert.is_truthy(target)
+
+    vim.api.nvim_win_set_cursor(0, { target, 0 })
+    local expected = render.source_line(view.session().render, target)
+    view.open_file()
+
+    assert.is_truthy(vim.api.nvim_buf_get_name(0):find("a.lua", 1, true))
+    assert.equals(expected, vim.api.nvim_win_get_cursor(0)[1])
   end)
 end)

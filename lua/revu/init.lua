@@ -32,11 +32,11 @@ function M.setup(opts)
   end, { desc = "Close the review tab" })
 
   vim.api.nvim_create_user_command("RevuNext", function()
-    view.cycle(1)
+    view.jump_file(1)
   end, { desc = "Next changed file" })
 
   vim.api.nvim_create_user_command("RevuPrev", function()
-    view.cycle(-1)
+    view.jump_file(-1)
   end, { desc = "Previous changed file" })
 end
 

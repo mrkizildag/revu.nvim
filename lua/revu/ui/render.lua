@@ -19,7 +19,9 @@ local config = require("revu.config")
 local M = {}
 
 ---@class revu.RenderRow
----@field kind "context"|"add"|"del"
+---@field kind "header"|"context"|"add"|"del"
+---@field path string|nil        file the row belongs to
+---@field file_index integer|nil index into the review's file list
 ---@field old_line integer|nil
 ---@field new_line integer|nil
 
@@ -99,6 +101,87 @@ function M.unified(file)
   end
 
   return out
+end
+
+---Added and removed line counts for a file.
+---@param file revu.File
+---@return integer adds, integer dels
+function M.stat(file)
+  local adds, dels = 0, 0
+  for _, h in ipairs(file.hunks) do
+    for _, l in ipairs(h.lines) do
+      if l.kind == "add" then
+        adds = adds + 1
+      elseif l.kind == "del" then
+        dels = dels + 1
+      end
+    end
+  end
+  return adds, dels
+end
+
+---The text of a file's header row.
+---
+---A real buffer line rather than virtual text: the cursor has to be able to land on it to
+---toggle the section, and virtual text cannot be navigated to.
+---@param file revu.File
+---@param collapsed boolean
+---@return string
+function M.header_text(file, collapsed)
+  local h = config.options.header
+  local adds, dels = M.stat(file)
+  local chevron = collapsed and h.collapsed or h.expanded
+  local stat = file.binary and "binary" or ("+%d −%d"):format(adds, dels)
+  return ("%s%s %s  %s%s"):format(h.left, chevron, file.path, stat, h.right)
+end
+
+---Render a whole review: every file in one buffer, each behind a header row.
+---@param files revu.File[]
+---@param collapsed table<string, boolean>|nil  paths that are folded shut
+---@return revu.Render
+function M.review(files, collapsed)
+  collapsed = collapsed or {}
+  local out = { lines = {}, rows = {}, marks = {}, virt = {}, binary = false }
+
+  for index, file in ipairs(files) do
+    local is_collapsed = collapsed[file.path] == true
+
+    table.insert(out.lines, M.header_text(file, is_collapsed))
+    table.insert(out.rows, { kind = "header", path = file.path, file_index = index })
+    table.insert(out.marks, { row = #out.lines - 1, line_hl = "RevuHeader" })
+
+    if not is_collapsed then
+      local body = M.unified(file)
+      local offset = #out.lines
+
+      for i, line in ipairs(body.lines) do
+        table.insert(out.lines, line)
+        local r = vim.tbl_extend("force", body.rows[i], { path = file.path, file_index = index })
+        table.insert(out.rows, r)
+      end
+      for _, m in ipairs(body.marks) do
+        table.insert(out.marks, vim.tbl_extend("force", m, { row = m.row + offset }))
+      end
+      for _, v in ipairs(body.virt) do
+        table.insert(out.virt, vim.tbl_extend("force", v, { row = v.row + offset }))
+      end
+    end
+  end
+
+  return out
+end
+
+---Buffer row of the header for `file_index`, 1-based. nil if not rendered.
+---@param render revu.Render
+---@param file_index integer
+---@return integer|nil
+function M.header_row(render, file_index)
+  for i, r in ipairs(render.rows) do
+    if r.kind == "header" and r.file_index == file_index then
+      return i
+    end
+  end
+  return nil
 end
 
 ---Source line a buffer row refers to, preferring the new side.

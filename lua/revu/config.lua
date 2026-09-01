@@ -9,6 +9,16 @@ M.defaults = {
   --- for commit ranges, where an untracked file belongs to neither side.
   untracked = true,
 
+  --- File header rows. `chevron` shows collapsed vs expanded; the row is real buffer text,
+  --- not virtual, so the cursor can land on it and toggle.
+  header = {
+    expanded = "▾",
+    collapsed = "▸",
+    left = "╭─ ",
+    right = " ─╮",
+    fill = "─",
+  },
+
   --- Inline +/- drawn before each line. This is virtual text, not buffer content: it
   --- renders like a real diff but cannot be selected, yanked or edited, and the code stays
   --- copyable on its own. Context gets a blank of equal width so everything lines up.
@@ -33,6 +43,11 @@ M.defaults = {
     RevuAddPrefix = "DiffAdd",
     RevuDeletePrefix = "DiffDelete",
     RevuHunk = "Comment",
+    RevuHeader = "Title",
+    RevuHeaderBorder = "FloatBorder",
+    RevuHeaderStat = "Comment",
+    RevuHeaderAdd = "DiffAdd",
+    RevuHeaderDelete = "DiffDelete",
   },
 }
 

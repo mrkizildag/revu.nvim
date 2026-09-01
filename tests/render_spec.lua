@@ -157,3 +157,84 @@ describe("render.source_line", function()
     assert.is_nil((render.source_line(render.unified(FILE), 99)))
   end)
 end)
+
+describe("render.review", function()
+  local A = parse(
+    "diff --git a/a.lua b/a.lua",
+    "--- a/a.lua",
+    "+++ b/a.lua",
+    "@@ -1,2 +1,2 @@",
+    " keep",
+    "-old",
+    "+new"
+  )
+  local B = parse(
+    "diff --git a/b.lua b/b.lua",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/b.lua",
+    "@@ -0,0 +1 @@",
+    "+fresh"
+  )
+
+  it("puts a header row above each file", function()
+    local r = render.review({ A, B })
+    assert.equals("header", r.rows[1].kind)
+    assert.equals("a.lua", r.rows[1].path)
+    assert.is_truthy(r.lines[1]:find("a.lua", 1, true))
+
+    local second = render.header_row(r, 2)
+    assert.equals("b.lua", r.rows[second].path)
+  end)
+
+  it("tags every row with its file so a cursor row resolves to a path", function()
+    local r = render.review({ A, B })
+    for _, row in ipairs(r.rows) do
+      assert.is_truthy(row.path)
+      assert.is_truthy(row.file_index)
+    end
+  end)
+
+  it("offsets marks and hunk headers into whole-review coordinates", function()
+    local r = render.review({ A, B })
+    for _, m in ipairs(r.marks) do
+      assert.is_true(m.row < #r.lines)
+    end
+    for _, v in ipairs(r.virt) do
+      assert.is_true(v.row < #r.lines, "hunk header must point at a real row")
+      assert.are_not.equals("header", r.rows[v.row + 1].kind)
+    end
+  end)
+
+  it("omits the body of a collapsed file but keeps its header", function()
+    local full = render.review({ A, B })
+    local folded = render.review({ A, B }, { ["a.lua"] = true })
+
+    assert.is_true(#folded.lines < #full.lines)
+    assert.equals("header", folded.rows[1].kind)
+    assert.equals("a.lua", folded.rows[1].path)
+    assert.equals("header", folded.rows[2].kind, "b.lua header should follow immediately")
+  end)
+
+  it("shows the collapsed chevron only when folded", function()
+    local cfg = require("revu.config").options.header
+    assert.is_truthy(render.header_text(A, false):find(cfg.expanded, 1, true))
+    assert.is_truthy(render.header_text(A, true):find(cfg.collapsed, 1, true))
+  end)
+
+  it("counts additions and deletions per file", function()
+    local adds, dels = render.stat(A)
+    assert.equals(1, adds)
+    assert.equals(1, dels)
+    assert.is_truthy(render.header_text(A, false):find("+1", 1, true))
+  end)
+
+  it("labels a binary file instead of counting lines", function()
+    local bin = parse(
+      "diff --git a/x.png b/x.png",
+      "index 1..2 100644",
+      "Binary files a/x.png and b/x.png differ"
+    )
+    assert.is_truthy(render.header_text(bin, false):find("binary", 1, true))
+  end)
+end)
