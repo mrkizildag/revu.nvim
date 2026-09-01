@@ -48,6 +48,10 @@ local function build_buffer(file, rev)
       line_hl_group = m.line_hl,
       sign_text = m.sign_text,
       sign_hl_group = m.sign_hl,
+      -- Inline rather than buffer text: the +/- shows but is not selectable or yankable,
+      -- and buffer columns still line up with the real source.
+      virt_text = m.prefix_text and { { m.prefix_text, m.prefix_hl } } or nil,
+      virt_text_pos = m.prefix_text and "inline" or nil,
     })
   end
 

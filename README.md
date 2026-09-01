@@ -21,6 +21,10 @@ hand the result to Claude Code or Codex as a file it can act on.
 | `:RevuNext` / `:RevuPrev` | Cycle changed files |
 | `:RevuClose` | Close the review tab |
 
+`+` and `-` are drawn as **inline virtual text**, so the view reads like a normal diff while
+the buffer still holds only source. Yanking a line gives back real code, not diff
+punctuation, and columns stay aligned with the file.
+
 ## Planned
 
 - Split (`old | new`) and unified diff views, toggleable like GitHub's

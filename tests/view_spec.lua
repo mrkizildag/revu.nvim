@@ -97,6 +97,27 @@ describe("view.open", function()
     assert.is_true(virt > 0, "expected a hunk header as a virtual line")
   end)
 
+  it("draws +/- as inline virtual text, not buffer content", function()
+    view.open("HEAD", dir)
+    local buf = vim.api.nvim_get_current_buf()
+    local ns = vim.api.nvim_get_namespaces()["revu_diff"]
+
+    local inline = 0
+    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
+      if m[4].virt_text then
+        assert.equals("inline", m[4].virt_text_pos)
+        inline = inline + 1
+      end
+    end
+    assert.is_true(inline > 0, "expected inline +/- prefixes")
+
+    -- The guarantee that matters: the prefix is not in the text, so yanking a line gives
+    -- back real code rather than diff punctuation.
+    for _, l in ipairs(current_buf_lines()) do
+      assert.is_nil(l:find("^[+-] "))
+    end
+  end)
+
   it("reports an error rather than opening when there are no changes", function()
     sh({ "git", "commit", "-qam", "all done" }, dir)
     local ok, err = view.open("HEAD", dir)

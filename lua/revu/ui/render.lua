@@ -26,7 +26,7 @@ local M = {}
 ---@class revu.Render
 ---@field lines string[]                                        buffer contents
 ---@field rows revu.RenderRow[]                                 parallel to `lines`
----@field marks { row: integer, line_hl: string?, sign_text: string?, sign_hl: string? }[]
+---@field marks { row: integer, line_hl: string?, sign_text: string?, sign_hl: string?, prefix_text: string?, prefix_hl: string? }[]
 ---@field virt { row: integer, text: string, hl: string }[]     hunk headers, drawn above `row`
 ---@field binary boolean
 
@@ -68,20 +68,27 @@ function M.unified(file)
       })
 
       local row = #out.lines - 1 -- extmarks are 0-based
+      local mark = { row = row }
+
       if line.kind == "add" then
-        table.insert(out.marks, {
-          row = row,
-          line_hl = "RevuAdd",
-          sign_text = opts.signs.add,
-          sign_hl = "RevuAddSign",
-        })
+        mark.line_hl = "RevuAdd"
+        mark.prefix_text = opts.prefix.add
+        mark.prefix_hl = "RevuAddPrefix"
+        mark.sign_text = opts.signs and opts.signs.add or nil
+        mark.sign_hl = "RevuAddSign"
       elseif line.kind == "del" then
-        table.insert(out.marks, {
-          row = row,
-          line_hl = "RevuDelete",
-          sign_text = opts.signs.delete,
-          sign_hl = "RevuDeleteSign",
-        })
+        mark.line_hl = "RevuDelete"
+        mark.prefix_text = opts.prefix.delete
+        mark.prefix_hl = "RevuDeletePrefix"
+        mark.sign_text = opts.signs and opts.signs.delete or nil
+        mark.sign_hl = "RevuDeleteSign"
+      else
+        -- Context still gets a prefix, of equal width, so the columns line up.
+        mark.prefix_text = opts.prefix.context
+      end
+
+      if mark.line_hl or mark.prefix_text then
+        table.insert(out.marks, mark)
       end
     end
   end

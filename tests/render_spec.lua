@@ -22,17 +22,59 @@ describe("render.unified", function()
     assert.same({ "keep", "gone", "new", "tail" }, r.lines)
   end)
 
-  it("marks additions and deletions and leaves context unmarked", function()
+  it("highlights additions and deletions but not context", function()
     local r = render.unified(FILE)
     local by_row = {}
     for _, m in ipairs(r.marks) do
       by_row[m.row] = m
     end
-    assert.is_nil(by_row[0], "context row should have no mark")
+    assert.is_nil(by_row[0].line_hl, "context must not be background-highlighted")
     assert.equals("RevuDelete", by_row[1].line_hl)
     assert.equals("RevuAdd", by_row[2].line_hl)
-    assert.is_nil(by_row[3])
-    assert.is_truthy(by_row[1].sign_text)
+    assert.is_nil(by_row[3].line_hl)
+  end)
+
+  it("gives every row an inline prefix, padded so columns line up", function()
+    local r = render.unified(FILE)
+    local by_row = {}
+    for _, m in ipairs(r.marks) do
+      by_row[m.row] = m
+    end
+    assert.equals("  ", by_row[0].prefix_text) -- context
+    assert.equals("- ", by_row[1].prefix_text)
+    assert.equals("+ ", by_row[2].prefix_text)
+    assert.equals("RevuAddPrefix", by_row[2].prefix_hl)
+
+    local widths = {}
+    for _, m in pairs(by_row) do
+      widths[#m.prefix_text] = true
+    end
+    assert.equals(1, vim.tbl_count(widths), "all prefixes must be the same width")
+  end)
+
+  it("keeps the prefix out of the buffer text so code stays yankable", function()
+    local r = render.unified(FILE)
+    for _, l in ipairs(r.lines) do
+      assert.is_nil(l:find("^[+-] "))
+    end
+  end)
+
+  it("omits gutter signs unless they are configured on", function()
+    local r = render.unified(FILE)
+    for _, m in ipairs(r.marks) do
+      assert.is_nil(m.sign_text)
+    end
+
+    require("revu.config").setup({ signs = { add = "▎", delete = "▎" } })
+    local with_signs = render.unified(FILE)
+    local found = false
+    for _, m in ipairs(with_signs.marks) do
+      if m.sign_text then
+        found = true
+      end
+    end
+    assert.is_true(found)
+    require("revu.config").setup({})
   end)
 
   it("emits the hunk header as a virtual line, not a buffer line", function()
