@@ -5,8 +5,25 @@ In-editor diff review with comments an AI agent can read.
 Review a diff without leaving Neovim, annotate lines the way you would on a GitHub PR, and
 hand the result to Claude Code or Codex as a file it can act on.
 
-> **Status: in progress.** The diff model and its test suite are in; the UI is not. Tracking
-> issue: [#1](https://github.com/mrkizildag/revu.nvim/issues/1).
+> **Status: in progress.** The diff model, comment store, re-anchoring and the unified diff
+> view are in. Comments are not rendered in the view yet. Tracking issue:
+> [#1](https://github.com/mrkizildag/revu.nvim/issues/1).
+
+## Usage
+
+```lua
+{ "mrkizildag/revu.nvim", opts = {} }
+```
+
+| Command | Does |
+| --- | --- |
+| `:Revu [rev]` | Review changes against `rev` (default `HEAD`; try `main...HEAD`) |
+| `:RevuNext` / `:RevuPrev` | Cycle changed files |
+| `:RevuClose` | Close the review tab |
+
+`+` and `-` are drawn as **inline virtual text**, so the view reads like a normal diff while
+the buffer still holds only source. Yanking a line gives back real code, not diff
+punctuation, and columns stay aligned with the file.
 
 ## Planned
 
