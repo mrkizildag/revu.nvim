@@ -268,6 +268,114 @@ describe("view.close", function()
   end)
 end)
 
+describe("returning to the review", function()
+  local dir
+
+  before_each(function()
+    require("revu.config").setup({})
+    dir = repo_with_changes()
+  end)
+
+  after_each(function()
+    view.close()
+  end)
+
+  local function first_body_row()
+    for i, r in ipairs(view.session().render.rows) do
+      if r.kind ~= "header" and (r.new_line or r.old_line) then
+        return i
+      end
+    end
+  end
+
+  local function press(keys)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "nx", false)
+  end
+
+  it("keeps the review buffer alive when something replaces it", function()
+    view.open("HEAD", dir)
+    local rbuf = vim.api.nvim_get_current_buf()
+    assert.equals("hide", vim.bo[rbuf].bufhidden)
+
+    vim.api.nvim_win_set_cursor(0, { first_body_row(), 0 })
+    view.open_file()
+
+    assert.are_not.equals(rbuf, vim.api.nvim_get_current_buf())
+    assert.is_true(vim.api.nvim_buf_is_valid(rbuf), "the review must survive the jump")
+  end)
+
+  it("returns to the row it was left on", function()
+    view.open("HEAD", dir)
+    local rbuf = vim.api.nvim_get_current_buf()
+    local row = first_body_row()
+    vim.api.nvim_win_set_cursor(0, { row, 0 })
+
+    view.open_file()
+    press("<C-o>")
+
+    assert.equals(rbuf, vim.api.nvim_get_current_buf())
+    assert.equals(row, vim.api.nvim_win_get_cursor(0)[1])
+  end)
+
+  it("walks back through several jumps", function()
+    view.open("HEAD", dir)
+    local rbuf = vim.api.nvim_get_current_buf()
+    vim.api.nvim_win_set_cursor(0, { first_body_row(), 0 })
+
+    view.open_file() -- review -> a.lua
+    press("G") -- a jump within the file
+    press("<C-o>") -- back to where we entered a.lua
+    assert.are_not.equals(rbuf, vim.api.nvim_get_current_buf())
+
+    press("<C-o>") -- and back into the review
+    assert.equals(rbuf, vim.api.nvim_get_current_buf())
+  end)
+
+  it("hide keeps the session so :Revu comes back to the same place", function()
+    view.open("HEAD", dir)
+    local rbuf = vim.api.nvim_get_current_buf()
+    local row = first_body_row()
+    vim.api.nvim_win_set_cursor(0, { row, 0 })
+
+    view.hide()
+    assert.are_not.equals(rbuf, vim.api.nvim_get_current_buf())
+    assert.is_true(vim.api.nvim_buf_is_valid(rbuf))
+
+    view.open("HEAD", dir)
+    assert.equals(rbuf, vim.api.nvim_get_current_buf(), "should reuse, not rebuild")
+    assert.equals(row, vim.api.nvim_win_get_cursor(0)[1])
+  end)
+
+  it("does not leak a buffer per :Revu", function()
+    local function revu_buffers()
+      local n = 0
+      for _, b in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(b) and vim.bo[b].filetype == "revu" then
+          n = n + 1
+        end
+      end
+      return n
+    end
+
+    local before = revu_buffers()
+    view.open("HEAD", dir)
+    view.hide()
+    view.open("HEAD", dir)
+    view.hide()
+    view.open("HEAD", dir)
+    assert.equals(before + 1, revu_buffers())
+  end)
+
+  it("close discards the buffer even when the review is hidden", function()
+    view.open("HEAD", dir)
+    local rbuf = vim.api.nvim_get_current_buf()
+    view.hide()
+
+    view.close()
+    assert.is_false(vim.api.nvim_buf_is_valid(rbuf))
+  end)
+end)
+
 describe("view.open_file", function()
   it("opens the real file at the reviewed line", function()
     local dir = repo_with_changes()
