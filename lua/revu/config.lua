@@ -9,13 +9,14 @@ M.defaults = {
   --- for commit ranges, where an untracked file belongs to neither side.
   untracked = true,
 
-  --- File header rows. `chevron` shows collapsed vs expanded; the row is real buffer text,
-  --- not virtual, so the cursor can land on it and toggle.
+  --- Full-width pill introducing each file. A real buffer line, not virtual text: the
+  --- cursor has to land on it to toggle the section, and virtual text cannot be navigated
+  --- to. Segments are coloured individually, so the path dims and the counts go green/red.
   header = {
     expanded = "▾",
     collapsed = "▸",
-    left = "╭─ ",
-    right = " ─╮",
+    corner_left = "╭",
+    corner_right = "╮",
     fill = "─",
   },
 
@@ -43,11 +44,15 @@ M.defaults = {
     RevuAddPrefix = "DiffAdd",
     RevuDeletePrefix = "DiffDelete",
     RevuHunk = "Comment",
-    RevuHeader = "Title",
+    -- `Added`/`Removed` are the semantic foreground green and red, unlike DiffAdd and
+    -- DiffDelete which are backgrounds meant for whole lines.
     RevuHeaderBorder = "FloatBorder",
+    RevuHeaderChevron = "Special",
+    RevuHeaderDir = "Comment",
+    RevuHeaderName = "Title",
+    RevuHeaderAdd = "Added",
+    RevuHeaderDelete = "Removed",
     RevuHeaderStat = "Comment",
-    RevuHeaderAdd = "DiffAdd",
-    RevuHeaderDelete = "DiffDelete",
   },
 }
 

@@ -28,7 +28,7 @@ local M = {}
 ---@class revu.Render
 ---@field lines string[]                                        buffer contents
 ---@field rows revu.RenderRow[]                                 parallel to `lines`
----@field marks { row: integer, line_hl: string?, sign_text: string?, sign_hl: string?, prefix_text: string?, prefix_hl: string? }[]
+---@field marks { row: integer, line_hl: string?, sign_text: string?, sign_hl: string?, prefix_text: string?, prefix_hl: string?, segments: table[]? }[]
 ---@field virt { row: integer, text: string, hl: string }[]     hunk headers, drawn above `row`
 ---@field binary boolean
 
@@ -120,35 +120,79 @@ function M.stat(file)
   return adds, dels
 end
 
----The text of a file's header row.
+---The pill introducing a file: a full-width rounded bar with the path centred and the
+---counts beside it.
 ---
----A real buffer line rather than virtual text: the cursor has to be able to land on it to
----toggle the section, and virtual text cannot be navigated to.
+---Returns byte-offset segments alongside the text, because a single buffer line needs
+---several colours -- dimmed directory, bright filename, green additions, red deletions --
+---and that is done with ranged extmarks rather than one line highlight.
 ---@param file revu.File
 ---@param collapsed boolean
----@return string
-function M.header_text(file, collapsed)
+---@param width integer  window width to fill
+---@return string text, { col: integer, end_col: integer, hl: string }[] segments
+function M.header_line(file, collapsed, width)
   local h = config.options.header
   local adds, dels = M.stat(file)
-  local chevron = collapsed and h.collapsed or h.expanded
-  local stat = file.binary and "binary" or ("+%d −%d"):format(adds, dels)
-  return ("%s%s %s  %s%s"):format(h.left, chevron, file.path, stat, h.right)
+
+  local dir, name = file.path:match("^(.*/)([^/]+)$")
+  dir, name = dir or "", name or file.path
+
+  ---@type { [1]: string, [2]: string|nil }[]
+  local pieces = {
+    { (collapsed and h.collapsed or h.expanded) .. "  ", "RevuHeaderChevron" },
+    { dir, "RevuHeaderDir" },
+    { name, "RevuHeaderName" },
+  }
+  if file.binary then
+    pieces[#pieces + 1] = { "   binary", "RevuHeaderStat" }
+  else
+    pieces[#pieces + 1] = { "   +" .. adds, "RevuHeaderAdd" }
+    pieces[#pieces + 1] = { "  −" .. dels, "RevuHeaderDelete" }
+  end
+
+  local content = ""
+  for _, piece in ipairs(pieces) do
+    content = content .. piece[1]
+  end
+
+  -- Pad the two sides so the content sits in the middle. A window narrower than the
+  -- content just gets no padding rather than a broken pill.
+  local slack = width - vim.fn.strdisplaywidth(content) - 4 -- corners + a space each side
+  local left = math.max(math.floor(slack / 2), 0)
+  local right = math.max(slack - left, 0)
+
+  local lead = h.corner_left .. h.fill:rep(left) .. " "
+  local text = lead .. content .. " " .. h.fill:rep(right) .. h.corner_right
+
+  local segments = { { col = 0, end_col = #text, hl = "RevuHeaderBorder" } }
+  local at = #lead
+  for _, piece in ipairs(pieces) do
+    if piece[2] and piece[1] ~= "" then
+      segments[#segments + 1] = { col = at, end_col = at + #piece[1], hl = piece[2] }
+    end
+    at = at + #piece[1]
+  end
+
+  return text, segments
 end
 
 ---Render a whole review: every file in one buffer, each behind a header row.
 ---@param files revu.File[]
 ---@param collapsed table<string, boolean>|nil  paths that are folded shut
+---@param width integer|nil  window width the header pills should fill
 ---@return revu.Render
-function M.review(files, collapsed)
+function M.review(files, collapsed, width)
   collapsed = collapsed or {}
+  width = width or 80
   local out = { lines = {}, rows = {}, marks = {}, virt = {}, binary = false }
 
   for index, file in ipairs(files) do
     local is_collapsed = collapsed[file.path] == true
 
-    table.insert(out.lines, M.header_text(file, is_collapsed))
+    local text, segments = M.header_line(file, is_collapsed, width)
+    table.insert(out.lines, text)
     table.insert(out.rows, { kind = "header", path = file.path, file_index = index })
-    table.insert(out.marks, { row = #out.lines - 1, line_hl = "RevuHeader" })
+    table.insert(out.marks, { row = #out.lines - 1, segments = segments })
 
     if not is_collapsed then
       local body = M.unified(file)

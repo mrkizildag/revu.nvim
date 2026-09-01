@@ -218,15 +218,15 @@ describe("render.review", function()
 
   it("shows the collapsed chevron only when folded", function()
     local cfg = require("revu.config").options.header
-    assert.is_truthy(render.header_text(A, false):find(cfg.expanded, 1, true))
-    assert.is_truthy(render.header_text(A, true):find(cfg.collapsed, 1, true))
+    assert.is_truthy((render.header_line(A, false, 80)):find(cfg.expanded, 1, true))
+    assert.is_truthy((render.header_line(A, true, 80)):find(cfg.collapsed, 1, true))
   end)
 
   it("counts additions and deletions per file", function()
     local adds, dels = render.stat(A)
     assert.equals(1, adds)
     assert.equals(1, dels)
-    assert.is_truthy(render.header_text(A, false):find("+1", 1, true))
+    assert.is_truthy((render.header_line(A, false, 80)):find("+1", 1, true))
   end)
 
   it("labels a binary file instead of counting lines", function()
@@ -235,6 +235,76 @@ describe("render.review", function()
       "index 1..2 100644",
       "Binary files a/x.png and b/x.png differ"
     )
-    assert.is_truthy(render.header_text(bin, false):find("binary", 1, true))
+    assert.is_truthy((render.header_line(bin, false, 80)):find("binary", 1, true))
+  end)
+end)
+
+describe("render.header_line", function()
+  local NESTED = parse(
+    "diff --git a/lua/revu/ui/render.lua b/lua/revu/ui/render.lua",
+    "--- a/lua/revu/ui/render.lua",
+    "+++ b/lua/revu/ui/render.lua",
+    "@@ -1,2 +1,3 @@",
+    " keep",
+    "-old",
+    "+new"
+  )
+
+  it("fills the given width exactly", function()
+    for _, w in ipairs({ 60, 80, 120, 200 }) do
+      local text = render.header_line(NESTED, false, w)
+      assert.equals(w, vim.fn.strdisplaywidth(text), "width " .. w)
+    end
+  end)
+
+  it("centres the content", function()
+    local text = render.header_line(NESTED, false, 100)
+    local fill = require("revu.config").options.header.fill
+    local lead = text:match("^╭(" .. fill .. "*)")
+    local tail = text:match("(" .. fill .. "*)╮$")
+    -- allow one cell of slack for an odd amount of padding
+    assert.is_true(math.abs(vim.fn.strdisplaywidth(lead) - vim.fn.strdisplaywidth(tail)) <= 1)
+  end)
+
+  it("does not break when the window is narrower than the content", function()
+    local text = render.header_line(NESTED, false, 10)
+    assert.is_truthy(text:find("render.lua", 1, true))
+    assert.is_truthy(text:find("^╭"))
+    assert.is_truthy(text:find("╮$"))
+  end)
+
+  it("colours the directory, filename and counts separately", function()
+    local text, segs = render.header_line(NESTED, false, 100)
+    local by_hl = {}
+    for _, s in ipairs(segs) do
+      by_hl[s.hl] = text:sub(s.col + 1, s.end_col)
+    end
+    assert.equals("lua/revu/ui/", by_hl.RevuHeaderDir)
+    assert.equals("render.lua", by_hl.RevuHeaderName)
+    assert.is_truthy(by_hl.RevuHeaderAdd:find("+1", 1, true))
+    assert.is_truthy(by_hl.RevuHeaderDelete:find("−1", 1, true))
+    assert.equals(text, by_hl.RevuHeaderBorder, "border segment should span the pill")
+  end)
+
+  it("omits the directory segment for a top-level file", function()
+    local top = parse(
+      "diff --git a/init.lua b/init.lua",
+      "--- a/init.lua",
+      "+++ b/init.lua",
+      "@@ -1 +1 @@",
+      "-a",
+      "+b"
+    )
+    local _, segs = render.header_line(top, false, 100)
+    for _, s in ipairs(segs) do
+      assert.are_not.equals("RevuHeaderDir", s.hl)
+    end
+  end)
+
+  it("keeps segment offsets inside the text", function()
+    local text, segs = render.header_line(NESTED, false, 100)
+    for _, s in ipairs(segs) do
+      assert.is_true(s.col >= 0 and s.end_col <= #text, s.hl .. " out of range")
+    end
   end)
 end)
