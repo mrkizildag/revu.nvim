@@ -8,10 +8,12 @@
 local diff = require("revu.diff")
 local git = require("revu.git")
 local render = require("revu.ui.render")
+local syntax = require("revu.ui.syntax")
 
 local M = {}
 
 local NS = vim.api.nvim_create_namespace("revu_diff")
+local SYNTAX_NS = vim.api.nvim_create_namespace("revu_syntax")
 
 ---@type table<integer, { rev: string, root: string, files: revu.File[], collapsed: table<string, boolean>, render: revu.Render, prev_buf: integer|nil }>
 local sessions = {}
@@ -70,6 +72,9 @@ local function draw(buf)
       virt_lines_above = true,
     })
   end
+
+  -- Separate namespace so a redraw can rebuild syntax without disturbing the diff marks.
+  syntax.apply(buf, SYNTAX_NS, r.rows)
 end
 
 ---Keep the cursor off pill borders.
