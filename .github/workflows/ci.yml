@@ -26,10 +26,15 @@ jobs:
       - name: Install plenary
         run: git clone --depth 1 https://github.com/nvim-lua/plenary.nvim .tests/plenary.nvim
 
+      # -u on the PARENT too, not just the child processes: in CI there is no user
+      # config, so without it plenary is absent from the parent's rtp and
+      # PlenaryBustedDirectory is an unknown command -- which hangs rather than fails.
       - name: Run tests
+        timeout-minutes: 5
         run: |
-          nvim --headless \
-            -c "PlenaryBustedDirectory tests/ {minimal_init='tests/minimal_init.lua'}"
+          nvim --headless --noplugin -u tests/minimal_init.lua \
+            -c "PlenaryBustedDirectory tests/ {minimal_init='tests/minimal_init.lua'}" \
+            < /dev/null
 
   format:
     name: stylua
