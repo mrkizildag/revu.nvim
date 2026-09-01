@@ -215,10 +215,18 @@ function M.review(files, collapsed, width)
   for index, file in ipairs(files) do
     local is_collapsed = collapsed[file.path] == true
 
-    -- Three rows per pill; all tagged as `header` so folding works from any of them.
-    for _, hl_line in ipairs(M.header_lines(file, is_collapsed, width)) do
+    -- Three rows per pill, all tagged `header` so folding works from any of them. `part`
+    -- distinguishes the content row from its borders, which is what lets the cursor skip
+    -- the borders and what header_row aims at.
+    local parts = { "top", "body", "bottom" }
+    for i, hl_line in ipairs(M.header_lines(file, is_collapsed, width)) do
       table.insert(out.lines, hl_line.text)
-      table.insert(out.rows, { kind = "header", path = file.path, file_index = index })
+      table.insert(out.rows, {
+        kind = "header",
+        part = parts[i],
+        path = file.path,
+        file_index = index,
+      })
       table.insert(out.marks, { row = #out.lines - 1, segments = hl_line.segments })
     end
 
@@ -250,11 +258,45 @@ end
 ---@return integer|nil
 function M.header_row(render, file_index)
   for i, r in ipairs(render.rows) do
-    if r.kind == "header" and r.file_index == file_index then
-      return i + 1
+    if r.kind == "header" and r.file_index == file_index and r.part == "body" then
+      return i
     end
   end
   return nil
+end
+
+---The nearest row the cursor may rest on, searching from `from` in `dir`, turning around
+---at the end rather than giving up -- a pill at the very top or bottom of the buffer would
+---otherwise leave the cursor parked on a border.
+---
+---Pure and separate from the autocmd that calls it, because this is the part with the edge
+---cases and `CursorMoved` cannot be driven from a headless test.
+---@param rows revu.RenderRow[]
+---@param from integer  1-based
+---@param dir 1|-1      direction of travel
+---@return integer|nil
+function M.next_landable(rows, from, dir)
+  local function seek(start, step)
+    local i = start
+    while rows[i] and not M.is_landable(rows[i]) do
+      i = i + step
+    end
+    return rows[i] and i or nil
+  end
+  return seek(from, dir) or seek(from, -dir)
+end
+
+---Whether the cursor should be allowed to rest on a row.
+---
+---Pill borders are decoration; there is nothing to do while sitting on one, and stopping
+---there on the way past just costs an extra keypress.
+---@param row revu.RenderRow|nil
+---@return boolean
+function M.is_landable(row)
+  if not row then
+    return false
+  end
+  return row.kind ~= "header" or row.part == "body"
 end
 
 ---Source line a buffer row refers to, preferring the new side.

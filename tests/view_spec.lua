@@ -177,6 +177,66 @@ describe("view.toggle", function()
   end)
 end)
 
+describe("cursor skipping borders", function()
+  local dir
+
+  before_each(function()
+    require("revu.config").setup({})
+    dir = repo_with_changes()
+  end)
+
+  after_each(function()
+    if view.is_open() then
+      view.close()
+    end
+  end)
+
+  --- CursorMoved does not fire under headless feedkeys, so drive the handler the way the
+  --- autocmd would and assert on where it puts the cursor.
+  local function land_on(row, coming_from)
+    vim.api.nvim_win_set_cursor(0, { row, 0 })
+    view.session().last_row = coming_from
+    vim.cmd("doautocmd CursorMoved")
+    return vim.api.nvim_win_get_cursor(0)[1]
+  end
+
+  it("starts on the first pill's content row, not its border", function()
+    view.open("HEAD", dir)
+    local row = vim.api.nvim_win_get_cursor(0)[1]
+    assert.equals("body", view.session().render.rows[row].part)
+  end)
+
+  it("moves off a top border downward when travelling down", function()
+    view.open("HEAD", dir)
+    assert.equals("body", view.session().render.rows[land_on(1, 0)].part)
+  end)
+
+  it("moves off a bottom border downward when travelling down", function()
+    view.open("HEAD", dir)
+    local landed = land_on(3, 2)
+    assert.is_true(render.is_landable(view.session().render.rows[landed]))
+    assert.is_true(landed > 3)
+  end)
+
+  it("moves off a bottom border upward when travelling up", function()
+    view.open("HEAD", dir)
+    assert.equals(2, land_on(3, 4))
+  end)
+
+  it("leaves a legitimate row alone", function()
+    view.open("HEAD", dir)
+    local rows = view.session().render.rows
+    local body
+    for i, r in ipairs(rows) do
+      if r.kind == "context" or r.kind == "add" then
+        body = i
+        break
+      end
+    end
+    assert.equals(body, land_on(body, body - 1))
+  end)
+end)
+
 describe("view.jump_file", function()
   it("moves between headers and wraps", function()
     local dir = repo_with_changes()

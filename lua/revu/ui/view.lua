@@ -72,6 +72,34 @@ local function draw(buf)
   end
 end
 
+---Keep the cursor off pill borders.
+---
+---Done on CursorMoved rather than by remapping motions: one handler covers j, k, }, G,
+---search and the mouse, where remapping would have to cover each of them and still miss
+---whatever it forgot. The direction of travel decides which way to skip, so moving down
+---onto a border continues down and moving up continues up.
+---@param buf integer
+local function skip_borders(buf)
+  local s = sessions[buf]
+  local win = vim.fn.bufwinid(buf)
+  if not s or win == -1 then
+    return
+  end
+
+  local row = vim.api.nvim_win_get_cursor(win)[1]
+  if render.is_landable(s.render.rows[row]) then
+    s.last_row = row
+    return
+  end
+
+  local dir = (s.last_row and row < s.last_row) and -1 or 1
+  local target = render.next_landable(s.render.rows, row, dir)
+  if target then
+    pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
+    s.last_row = target
+  end
+end
+
 ---@param buf integer
 local function set_keymaps(buf)
   local function map(lhs, fn, desc)
@@ -157,6 +185,21 @@ function M.open(rev, cwd)
 
   draw(buf)
   set_keymaps(buf)
+
+  -- Start on the first pill's content row rather than its top border.
+  local first = render.header_row(sessions[buf].render, 1)
+  if first then
+    pcall(vim.api.nvim_win_set_cursor, vim.api.nvim_get_current_win(), { first, 0 })
+    sessions[buf].last_row = first
+  end
+
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    group = vim.api.nvim_create_augroup("revu-cursor-" .. buf, { clear = true }),
+    buffer = buf,
+    callback = function()
+      skip_borders(buf)
+    end,
+  })
 
   -- Pills are sized to the window, so they have to be rebuilt when it changes.
   vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {

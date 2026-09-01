@@ -323,3 +323,50 @@ describe("render.header_lines", function()
     end
   end)
 end)
+
+describe("cursor landing", function()
+  -- top, body, bottom, then two diff rows, then another pill
+  local ROWS = {
+    { kind = "header", part = "top" },
+    { kind = "header", part = "body" },
+    { kind = "header", part = "bottom" },
+    { kind = "context" },
+    { kind = "add" },
+    { kind = "header", part = "top" },
+    { kind = "header", part = "body" },
+    { kind = "header", part = "bottom" },
+  }
+
+  it("allows diff rows and the pill's content row only", function()
+    assert.is_false(render.is_landable(ROWS[1]))
+    assert.is_true(render.is_landable(ROWS[2]))
+    assert.is_false(render.is_landable(ROWS[3]))
+    assert.is_true(render.is_landable(ROWS[4]))
+    assert.is_true(render.is_landable(ROWS[5]))
+    assert.is_false(render.is_landable(nil))
+  end)
+
+  it("continues downward when travelling down onto a border", function()
+    assert.equals(2, render.next_landable(ROWS, 1, 1))
+    assert.equals(4, render.next_landable(ROWS, 3, 1))
+    assert.equals(7, render.next_landable(ROWS, 6, 1))
+  end)
+
+  it("continues upward when travelling up onto a border", function()
+    assert.equals(5, render.next_landable(ROWS, 6, -1))
+    assert.equals(7, render.next_landable(ROWS, 8, -1))
+    assert.equals(2, render.next_landable(ROWS, 3, -1))
+  end)
+
+  it("turns around rather than parking on a border at either end", function()
+    -- row 1 is a border and there is nothing above it
+    assert.equals(2, render.next_landable(ROWS, 1, -1))
+    -- row 8 is a border and there is nothing below it
+    assert.equals(7, render.next_landable(ROWS, 8, 1))
+  end)
+
+  it("returns nil when nothing at all is landable", function()
+    local all_borders = { { kind = "header", part = "top" }, { kind = "header", part = "bottom" } }
+    assert.is_nil(render.next_landable(all_borders, 1, 1))
+  end)
+end)
