@@ -131,3 +131,28 @@ describe("git.diff with untracked", function()
     end
   end)
 end)
+
+describe("git.default_base", function()
+  local function branched()
+    local dir = vim.fn.tempname()
+    vim.fn.mkdir(dir, "p")
+    sh({ "git", "init", "-q", "-b", "main" }, dir)
+    sh({ "git", "config", "user.email", "t@t" }, dir)
+    sh({ "git", "config", "user.name", "t" }, dir)
+    vim.fn.writefile({ "one" }, dir .. "/a.txt")
+    sh({ "git", "add", "-A" }, dir)
+    sh({ "git", "commit", "-qm", "init" }, dir)
+    sh({ "git", "switch", "-qc", "feature" }, dir)
+    return dir
+  end
+
+  it("finds main from a feature branch", function()
+    assert.equals("main", git.default_base(branched()))
+  end)
+
+  it("returns nil when standing on the base branch itself", function()
+    local dir = branched()
+    sh({ "git", "switch", "-q", "main" }, dir)
+    assert.is_nil(git.default_base(dir))
+  end)
+end)

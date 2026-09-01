@@ -112,7 +112,22 @@ function M.open(rev, cwd)
 
   local files = diff.parse(raw)
   if #files == 0 then
-    return false, ("no changes against %s"):format(rev)
+    -- A clean working tree is the common case right after committing, and the useful next
+    -- question is almost always "what did I just do on this branch?" -- so say how to ask
+    -- it rather than leaving a dead end.
+    local hint = ""
+    if git.compares_worktree(rev) then
+      local base = git.default_base(root)
+      if base then
+        local ahead = git.diff(("%s...HEAD"):format(base), root, { untracked = false })
+        if ahead and ahead ~= "" then
+          hint = (" — the working tree is clean; try `:Revu %s...HEAD` to review the branch"):format(
+            base
+          )
+        end
+      end
+    end
+    return false, ("no changes against %s%s"):format(rev, hint)
   end
 
   local prev_buf = vim.api.nvim_get_current_buf()

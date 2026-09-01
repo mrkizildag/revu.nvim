@@ -101,6 +101,37 @@ describe("view.open", function()
     assert.is_truthy(l[3]:find("^╰"), "bottom border")
     assert.is_true(l[2]:find("%+%d") > l[2]:find("%.lua"), "counts right of the filename")
   end)
+
+  it("points at the branch diff when the tree is clean but the branch is ahead", function()
+    sh({ "git", "switch", "-qc", "feature" }, dir)
+    sh({ "git", "add", "-A" }, dir)
+    sh({ "git", "commit", "-qm", "committed work" }, dir)
+
+    local ok, err = view.open("HEAD", dir)
+    assert.is_false(ok)
+    assert.is_truthy(err:find("working tree is clean", 1, true))
+    assert.is_truthy(err:find("main...HEAD", 1, true), "should name the command that works")
+  end)
+
+  it("reports plainly when there is nothing to review anywhere", function()
+    sh({ "git", "add", "-A" }, dir)
+    sh({ "git", "commit", "-qm", "all done" }, dir)
+
+    local ok, err = view.open("HEAD", dir)
+    assert.is_false(ok)
+    assert.is_truthy(err:find("no changes", 1, true))
+    -- on the base branch there is no better command to suggest
+    assert.is_nil(err:find("try", 1, true))
+  end)
+
+  it("reports an error outside a git repository", function()
+    local plain = vim.fn.tempname()
+    vim.fn.mkdir(plain, "p")
+    local ok, err = view.open("HEAD", plain)
+    assert.is_false(ok)
+    assert.is_truthy(err)
+    assert.is_false(view.is_open())
+  end)
 end)
 
 describe("view.toggle", function()
