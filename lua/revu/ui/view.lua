@@ -112,7 +112,8 @@ function M.open(rev, cwd)
     return false, root_err or "not a git repository"
   end
 
-  local raw, diff_err = git.diff(rev, root, { untracked = require("revu.config").options.untracked })
+  local raw, diff_err =
+    git.diff(rev, root, { untracked = require("revu.config").options.untracked })
   if not raw then
     return false, diff_err
   end

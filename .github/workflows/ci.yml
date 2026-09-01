@@ -44,5 +44,8 @@ jobs:
       - uses: JohnnyMorganz/stylua-action@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          version: latest
+          # Pinned, not `latest`: a newer stylua can reformat code that the locally
+          # installed one accepts, which fails CI on a diff the author cannot reproduce.
+          # Keep this in step with the version in your editor's install.
+          version: 2.5.2
           args: --check lua/ tests/
