@@ -5,10 +5,16 @@ on:
     branches: [main]
   pull_request:
 
+# A new push supersedes an in-flight run for the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: test (${{ matrix.neovim }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -26,9 +32,17 @@ jobs:
       - name: Install plenary
         run: git clone --depth 1 https://github.com/nvim-lua/plenary.nvim .tests/plenary.nvim
 
-      # -u on the PARENT too, not just the child processes: in CI there is no user
-      # config, so without it plenary is absent from the parent's rtp and
-      # PlenaryBustedDirectory is an unknown command -- which hangs rather than fails.
+      # `git init` alone is not enough: several specs commit, so a runner with no identity
+      # configured fails inside the fixtures rather than in the assertions.
+      - name: Configure git for fixture repos
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "ci"
+          git config --global init.defaultBranch main
+
+      # -u on the PARENT too, not just the child runners: in CI there is no user config, so
+      # without it plenary is absent from the parent's rtp and PlenaryBustedDirectory is an
+      # unknown command -- which hangs rather than fails.
       - name: Run tests
         timeout-minutes: 5
         run: |
@@ -39,6 +53,7 @@ jobs:
   format:
     name: stylua
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: JohnnyMorganz/stylua-action@v4
@@ -49,3 +64,25 @@ jobs:
           # Keep this in step with the version in your editor's install.
           version: 2.5.2
           args: --check lua/ tests/
+
+  lint:
+    name: luacheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lunarmodules/luacheck@v1
+        with:
+          args: lua/ tests/
+
+  # A single required check, so branch protection does not have to name every matrix leg.
+  ci:
+    name: ci
+    if: always()
+    needs: [test, format, lint]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if anything upstream failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+      - run: echo "all green"

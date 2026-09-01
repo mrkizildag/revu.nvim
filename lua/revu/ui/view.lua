@@ -348,7 +348,7 @@ end
 ---Put back the previous buffer but keep the review alive, so <C-o> and :Revu can return
 ---to it with its cursor and fold state intact.
 function M.hide()
-  local s, buf = current()
+  local s = current()
   if not s then
     return
   end
@@ -368,13 +368,13 @@ end
 function M.close()
   local s, buf = current()
   if not s then
-    -- May be called while the review is hidden; tear down whatever session exists.
-    for b, sess in pairs(sessions) do
+    -- May be called while the review is hidden, in which case there is no current session
+    -- to work from; tear down every session instead.
+    for b in pairs(sessions) do
       sessions[b] = nil
       if vim.api.nvim_buf_is_valid(b) then
         pcall(vim.api.nvim_buf_delete, b, { force = true })
       end
-      s = sess
     end
     return
   end
