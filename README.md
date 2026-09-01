@@ -36,9 +36,10 @@ The review buffer stays alive when you leave it, so `<CR>` into a file, read aro
 `<C-o>` brings you back to the row you left. `:Revu` again returns to the same review
 rather than rebuilding it.
 
-`+` and `-` are drawn as **inline virtual text**, so the view reads like a normal diff while
-the buffer still holds only source. Yanking a line gives back real code, not diff
-punctuation, and columns stay aligned with the file.
+`+` and `-` are drawn in the **sign column**, the way gitsigns marks hunks. The gutter is
+outside the text area, so the cursor never travels through them, an empty added line stays
+genuinely empty, and yanking gives back real code rather than diff punctuation. Set
+`prefix = { add = "+ ", delete = "- ", context = "  " }` to draw them inline instead.
 
 ## Planned
 

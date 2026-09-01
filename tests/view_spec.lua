@@ -102,6 +102,30 @@ describe("view.open", function()
     assert.is_true(l[2]:find("%+%d") > l[2]:find("%.lua"), "counts right of the filename")
   end)
 
+  it("draws +/- in the sign column, outside the text area", function()
+    view.open("HEAD", dir)
+    local buf = vim.api.nvim_get_current_buf()
+    local ns = vim.api.nvim_get_namespaces()["revu_diff"]
+
+    local signs, inline = 0, 0
+    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
+      if m[4].sign_text then
+        signs = signs + 1
+      end
+      if m[4].virt_text then
+        inline = inline + 1
+      end
+    end
+
+    assert.is_true(signs > 0, "expected +/- in the gutter")
+    assert.equals(0, inline, "nothing inline for the cursor to travel through")
+    assert.equals("yes", vim.wo.signcolumn)
+
+    for _, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+      assert.is_nil(l:find("^[+-] "))
+    end
+  end)
+
   it("points at the branch diff when the tree is clean but the branch is ahead", function()
     sh({ "git", "switch", "-qc", "feature" }, dir)
     sh({ "git", "add", "-A" }, dir)

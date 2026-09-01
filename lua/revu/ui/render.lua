@@ -74,22 +74,23 @@ function M.unified(file)
 
       if line.kind == "add" then
         mark.line_hl = "RevuAdd"
-        mark.prefix_text = opts.prefix.add
-        mark.prefix_hl = "RevuAddPrefix"
         mark.sign_text = opts.signs and opts.signs.add or nil
         mark.sign_hl = "RevuAddSign"
+        mark.prefix_text = opts.prefix and opts.prefix.add or nil
+        mark.prefix_hl = "RevuAddPrefix"
       elseif line.kind == "del" then
         mark.line_hl = "RevuDelete"
-        mark.prefix_text = opts.prefix.delete
-        mark.prefix_hl = "RevuDeletePrefix"
         mark.sign_text = opts.signs and opts.signs.delete or nil
         mark.sign_hl = "RevuDeleteSign"
+        mark.prefix_text = opts.prefix and opts.prefix.delete or nil
+        mark.prefix_hl = "RevuDeletePrefix"
       else
-        -- Context still gets a prefix, of equal width, so the columns line up.
-        mark.prefix_text = opts.prefix.context
+        -- Context gets a prefix of equal width so the columns line up. Nothing in the
+        -- gutter: an unchanged line has nothing to mark.
+        mark.prefix_text = opts.prefix and opts.prefix.context or nil
       end
 
-      if mark.line_hl or mark.prefix_text then
+      if mark.line_hl or mark.prefix_text or mark.sign_text then
         table.insert(out.marks, mark)
       end
     end
