@@ -29,7 +29,11 @@ function M.setup(opts)
 
   vim.api.nvim_create_user_command("RevuClose", function()
     view.close()
-  end, { desc = "Close the review tab" })
+  end, { desc = "Close the review and discard it" })
+
+  vim.api.nvim_create_user_command("RevuHide", function()
+    view.hide()
+  end, { desc = "Hide the review, keeping it for :Revu to return to" })
 
   vim.api.nvim_create_user_command("RevuNext", function()
     view.jump_file(1)

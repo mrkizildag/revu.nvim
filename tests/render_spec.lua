@@ -28,53 +28,57 @@ describe("render.unified", function()
     for _, m in ipairs(r.marks) do
       by_row[m.row] = m
     end
-    assert.is_nil(by_row[0].line_hl, "context must not be background-highlighted")
+    -- context produces no mark at all now: nothing to highlight, nothing to put in the
+    -- gutter, and no inline prefix by default
+    assert.is_nil(by_row[0], "context row should carry no mark")
     assert.equals("RevuDelete", by_row[1].line_hl)
     assert.equals("RevuAdd", by_row[2].line_hl)
-    assert.is_nil(by_row[3].line_hl)
+    assert.is_nil(by_row[3])
   end)
 
-  it("gives every row an inline prefix, padded so columns line up", function()
+  it("marks changed rows in the sign column and leaves context unmarked", function()
     local r = render.unified(FILE)
     local by_row = {}
     for _, m in ipairs(r.marks) do
       by_row[m.row] = m
     end
-    assert.equals("  ", by_row[0].prefix_text) -- context
-    assert.equals("- ", by_row[1].prefix_text)
-    assert.equals("+ ", by_row[2].prefix_text)
-    assert.equals("RevuAddPrefix", by_row[2].prefix_hl)
+    assert.equals("-", by_row[1].sign_text)
+    assert.equals("+", by_row[2].sign_text)
+    assert.is_nil(by_row[0] and by_row[0].sign_text, "context has nothing to mark")
+  end)
 
+  it("puts no inline prefix in the way of the cursor by default", function()
+    for _, m in ipairs(render.unified(FILE).marks) do
+      assert.is_nil(m.prefix_text)
+    end
+  end)
+
+  it("still supports inline prefixes when configured", function()
+    require("revu.config").setup({ prefix = { add = "+ ", delete = "- ", context = "  " } })
     local widths = {}
-    for _, m in pairs(by_row) do
+    for _, m in ipairs(render.unified(FILE).marks) do
+      assert.is_truthy(m.prefix_text)
       widths[#m.prefix_text] = true
     end
-    assert.equals(1, vim.tbl_count(widths), "all prefixes must be the same width")
-  end)
-
-  it("keeps the prefix out of the buffer text so code stays yankable", function()
-    local r = render.unified(FILE)
-    for _, l in ipairs(r.lines) do
-      assert.is_nil(l:find("^[+-] "))
-    end
-  end)
-
-  it("omits gutter signs unless they are configured on", function()
-    local r = render.unified(FILE)
-    for _, m in ipairs(r.marks) do
-      assert.is_nil(m.sign_text)
-    end
-
-    require("revu.config").setup({ signs = { add = "▎", delete = "▎" } })
-    local with_signs = render.unified(FILE)
-    local found = false
-    for _, m in ipairs(with_signs.marks) do
-      if m.sign_text then
-        found = true
-      end
-    end
-    assert.is_true(found)
+    assert.equals(1, vim.tbl_count(widths), "prefixes must be the same width")
     require("revu.config").setup({})
+  end)
+
+  it("keeps markers out of the buffer text so an empty line stays empty", function()
+    local f = parse(
+      "diff --git a/a.lua b/a.lua",
+      "--- a/a.lua",
+      "+++ b/a.lua",
+      "@@ -1,2 +1,3 @@",
+      " keep",
+      "+",
+      "+tail"
+    )
+    local r = render.unified(f)
+    assert.equals("", r.lines[2], "an added blank line must render as a genuinely empty line")
+    for _, l in ipairs(r.lines) do
+      assert.is_nil(l:find("^[+-]"))
+    end
   end)
 
   it("emits the hunk header as a virtual line, not a buffer line", function()

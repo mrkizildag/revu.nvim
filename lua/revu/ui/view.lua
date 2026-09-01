@@ -121,7 +121,24 @@ local function set_keymaps(buf)
   end, "previous file")
   map("<CR>", M.open_file, "open the real file here")
   map("gf", M.open_file, "open the real file here")
-  map("q", M.close, "close review")
+  map("q", M.hide, "hide the review (:RevuClose to discard it)")
+end
+
+---An existing session for the same repo and revision, if one is still alive.
+---@param root string
+---@param rev string
+---@return integer|nil bufnr
+local function existing(root, rev)
+  for buf, s in pairs(sessions) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      if s.root == root and s.rev == rev then
+        return buf
+      end
+    else
+      sessions[buf] = nil
+    end
+  end
+  return nil
 end
 
 ---Open a review of `rev` in the current window.
@@ -164,10 +181,26 @@ function M.open(rev, cwd)
   end
 
   local prev_buf = vim.api.nvim_get_current_buf()
+
+  -- Same repo and revision as a review that is merely hidden: show that one again rather
+  -- than building a second, so its cursor and fold state survive.
+  local alive = existing(root, rev)
+  if alive and alive ~= prev_buf then
+    vim.api.nvim_win_set_buf(vim.api.nvim_get_current_win(), alive)
+    local row = sessions[alive].last_row
+    if row then
+      pcall(vim.api.nvim_win_set_cursor, vim.api.nvim_get_current_win(), { row, 0 })
+    end
+    return true, nil
+  end
+
   local buf = vim.api.nvim_create_buf(false, true)
 
   vim.bo[buf].buftype = "nofile"
-  vim.bo[buf].bufhidden = "wipe"
+  -- `hide`, not `wipe`. Wiping destroyed the review the instant anything replaced it in
+  -- the window, so <C-o> jumped back to a buffer that no longer existed and landed on an
+  -- empty one. :RevuClose deletes it explicitly instead.
+  vim.bo[buf].bufhidden = "hide"
   vim.bo[buf].swapfile = false
   vim.bo[buf].filetype = "revu"
 
@@ -291,6 +324,9 @@ function M.open_file()
   local path = s.root .. "/" .. entry.path
 
   if vim.uv.fs_stat(path) then
+    -- `m'` records the current position in the jumplist; :edit does not do this on its
+    -- own, and without it <C-o> has nothing in the review to come back to.
+    vim.cmd("normal! m'")
     vim.cmd.edit(vim.fn.fnameescape(path))
     if line then
       pcall(vim.api.nvim_win_set_cursor, 0, { line, 0 })
@@ -309,10 +345,37 @@ function M.is_open()
   return current() ~= nil
 end
 
----Close the review and put back whatever buffer was there before.
+---Put back the previous buffer but keep the review alive, so <C-o> and :Revu can return
+---to it with its cursor and fold state intact.
+function M.hide()
+  local s, buf = current()
+  if not s then
+    return
+  end
+
+  local win = vim.api.nvim_get_current_win()
+  s.last_row = vim.api.nvim_win_get_cursor(win)[1]
+  vim.cmd("normal! m'")
+
+  if s.prev_buf and vim.api.nvim_buf_is_valid(s.prev_buf) then
+    vim.api.nvim_win_set_buf(win, s.prev_buf)
+  else
+    vim.cmd("enew")
+  end
+end
+
+---Close the review for good: restore the previous buffer and delete this one.
 function M.close()
   local s, buf = current()
   if not s then
+    -- May be called while the review is hidden; tear down whatever session exists.
+    for b, sess in pairs(sessions) do
+      sessions[b] = nil
+      if vim.api.nvim_buf_is_valid(b) then
+        pcall(vim.api.nvim_buf_delete, b, { force = true })
+      end
+      s = sess
+    end
     return
   end
 
