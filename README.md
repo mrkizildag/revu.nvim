@@ -19,6 +19,7 @@ hand the result to Claude Code or Codex as a file it can act on.
 | --- | --- |
 | `:Revu [rev]` | Review changes against `rev` (default `HEAD`; try `main...HEAD`) |
 | `:RevuNext` / `:RevuPrev` | Jump to the next / previous file header |
+| `:RevuSplit` / `:RevuUnified` | Switch view mode |
 | `:RevuHide` | Hide the review, keeping it to return to |
 | `:RevuClose` | Close the review and discard it |
 
@@ -29,9 +30,15 @@ in. Inside it:
 | --- | --- |
 | `<Tab>` / `za` | Fold the file section under the cursor |
 | `zR` / `zM` | Expand / collapse every file |
+| `gm` | Toggle unified / split (old │ new) |
 | `]f` / `[f` | Next / previous file |
 | `<CR>` / `gf` | Open the real file at this line |
 | `q` | Hide the review (`:RevuClose` discards it) |
+
+Split mode renders the *same* parsed diff into two aligned columns, old on the left and new
+on the right. Both sides get exactly the same number of rows — a deletion pads the new side,
+an addition pads the old — so `scrollbind` cannot drift no matter how the files differ in
+size. Switching modes keeps the cursor on the same source line.
 
 Folding uses real vim folds, so every row still exists when a file is collapsed and stored
 positions stay valid — `zo`, `zc`, `zj`, `zk` and friends all work, and a closed file draws

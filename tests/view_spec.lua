@@ -321,6 +321,91 @@ describe("cursor skipping borders", function()
   end)
 end)
 
+describe("view.set_mode", function()
+  local dir
+
+  before_each(function()
+    require("revu.config").setup({})
+    dir = repo_with_changes()
+  end)
+
+  after_each(function()
+    view.close()
+  end)
+
+  local function first_add()
+    for i, r in ipairs(view.session().render.rows) do
+      if r.kind == "add" and r.new_line then
+        return i, r
+      end
+    end
+  end
+
+  it("splits into two bound windows", function()
+    view.open("HEAD", dir)
+    local wins = #vim.api.nvim_tabpage_list_wins(0)
+
+    view.set_mode("split")
+    assert.equals("split", view.session().mode)
+    assert.equals(wins + 1, #vim.api.nvim_tabpage_list_wins(0))
+    assert.is_true(vim.wo.scrollbind)
+    assert.is_true(vim.wo.cursorbind)
+  end)
+
+  it("gives both sides the same number of rows so binding cannot drift", function()
+    view.open("HEAD", dir)
+    view.set_mode("split")
+    local s = view.session()
+    assert.equals(#s.split.old.lines, #s.split.new.lines)
+    assert.equals(vim.api.nvim_buf_line_count(s.bufs.old), vim.api.nvim_buf_line_count(s.bufs.new))
+  end)
+
+  it("keeps the cursor on the same source line across a round trip", function()
+    view.open("HEAD", dir)
+    local row, entry = first_add()
+    vim.api.nvim_win_set_cursor(0, { row, 0 })
+
+    view.set_mode("split")
+    local s = view.session()
+    local in_split = s.split.new.rows[vim.api.nvim_win_get_cursor(0)[1]]
+    assert.equals(entry.path, in_split.path)
+    assert.equals(entry.new_line, in_split.new_line)
+
+    view.set_mode("unified")
+    local back = view.session().render.rows[vim.api.nvim_win_get_cursor(0)[1]]
+    assert.equals(entry.path, back.path)
+    assert.equals(entry.new_line, back.new_line)
+  end)
+
+  it("toggles when given no argument", function()
+    view.open("HEAD", dir)
+    view.set_mode()
+    assert.equals("split", view.session().mode)
+    view.set_mode()
+    assert.equals("unified", view.session().mode)
+  end)
+
+  it("returns to a single window and cleans up the side buffers", function()
+    view.open("HEAD", dir)
+    view.set_mode("split")
+    local s = view.session()
+    local old_buf, new_buf = s.bufs.old, s.bufs.new
+
+    view.set_mode("unified")
+    assert.equals(1, #vim.api.nvim_tabpage_list_wins(0))
+    assert.is_false(vim.api.nvim_buf_is_valid(old_buf))
+    assert.is_false(vim.api.nvim_buf_is_valid(new_buf))
+  end)
+
+  it("does nothing when already in the requested mode", function()
+    view.open("HEAD", dir)
+    local buf = vim.api.nvim_get_current_buf()
+    view.set_mode("unified")
+    assert.equals(buf, vim.api.nvim_get_current_buf())
+    assert.equals(1, #vim.api.nvim_tabpage_list_wins(0))
+  end)
+end)
+
 describe("view.jump_file", function()
   it("moves between headers and wraps", function()
     local dir = repo_with_changes()
