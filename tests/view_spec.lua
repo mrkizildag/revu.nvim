@@ -159,45 +159,105 @@ describe("view.open", function()
 end)
 
 describe("view.toggle", function()
-  it("folds a file section shut and back open", function()
-    local dir = repo_with_changes()
-    view.open("HEAD", dir)
+  local dir
 
-    local expanded = #lines()
+  before_each(function()
+    require("revu.config").setup({})
+    dir = repo_with_changes()
+  end)
+
+  after_each(function()
+    view.close()
+  end)
+
+  --- The fold starts on the pill's bottom border, one row below the content row.
+  local function fold_closed_for(file_index)
+    local header = render.header_row(view.session().render, file_index)
+    return vim.fn.foldclosed(header + 1) ~= -1
+  end
+
+  it("folds without removing rows, so stored positions stay valid", function()
+    view.open("HEAD", dir)
+    local rows_before = vim.api.nvim_buf_line_count(0)
+
     vim.api.nvim_win_set_cursor(0, { 2, 0 })
     view.toggle()
 
-    local collapsed = #lines()
-    assert.is_true(collapsed < expanded, "collapsing should remove rows")
-    assert.is_truthy(lines()[2]:find("▸", 1, true), "chevron should flip")
+    assert.is_true(fold_closed_for(1))
+    assert.equals(rows_before, vim.api.nvim_buf_line_count(0), "rows must survive a fold")
+  end)
+
+  it("flips the chevron to match the fold state", function()
+    view.open("HEAD", dir)
+    local content = render.header_row(view.session().render, 1)
+
+    vim.api.nvim_win_set_cursor(0, { content, 0 })
+    view.toggle()
+    assert.is_truthy(
+      vim.api.nvim_buf_get_lines(0, content - 1, content, false)[1]:find("▸", 1, true)
+    )
 
     view.toggle()
-    assert.equals(expanded, #lines())
-    assert.is_truthy(lines()[2]:find("▾", 1, true))
-
-    view.close()
+    assert.is_truthy(
+      vim.api.nvim_buf_get_lines(0, content - 1, content, false)[1]:find("▾", 1, true)
+    )
+    assert.is_false(fold_closed_for(1))
   end)
 
   it("keeps the cursor on the header it toggled", function()
-    local dir = repo_with_changes()
     view.open("HEAD", dir)
-    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    local content = render.header_row(view.session().render, 1)
+    vim.api.nvim_win_set_cursor(0, { content, 0 })
     view.toggle()
-    -- back on the content row of the pill it toggled, not its top border
-    assert.equals(2, vim.api.nvim_win_get_cursor(0)[1])
-    view.close()
+    assert.equals(content, vim.api.nvim_win_get_cursor(0)[1])
   end)
 
   it("toggles from a body row, not just the header", function()
-    local dir = repo_with_changes()
     view.open("HEAD", dir)
 
-    local before = #lines()
-    vim.api.nvim_win_set_cursor(0, { 5, 0 }) -- inside the first file's diff, past the pill
+    local body
+    for i, r in ipairs(view.session().render.rows) do
+      if r.file_index == 1 and r.kind ~= "header" then
+        body = i
+        break
+      end
+    end
+    vim.api.nvim_win_set_cursor(0, { body, 0 })
     view.toggle()
-    assert.is_true(#lines() < before)
 
-    view.close()
+    assert.is_true(fold_closed_for(1))
+  end)
+
+  it("collapses and expands every file at once", function()
+    view.open("HEAD", dir)
+    local files = #view.session().files
+    assert.is_true(files >= 2)
+
+    view.toggle_all(false)
+    for i = 1, files do
+      assert.is_true(fold_closed_for(i), "file " .. i .. " should be folded")
+    end
+
+    view.toggle_all(true)
+    for i = 1, files do
+      assert.is_false(fold_closed_for(i), "file " .. i .. " should be open")
+    end
+  end)
+
+  it("shows the pill's bottom border as the fold line, not a line count", function()
+    view.open("HEAD", dir)
+    view.toggle_all(false)
+
+    local header = render.header_row(view.session().render, 1)
+    local start = vim.fn.foldclosed(header + 1)
+    assert.are_not.equals(-1, start)
+
+    -- foldtextresult asks vim what it would actually draw for that closed fold, which is
+    -- the only way to exercise foldtext: v:foldstart is set only while vim renders one.
+    local drawn = vim.fn.foldtextresult(start)
+    assert.equals(vim.fn.getline(start), drawn)
+    assert.is_truthy(drawn:find("╰", 1, true), "a folded file should read as a closed pill")
+    assert.is_nil(drawn:find("lines"), "not vim's default '+-- N lines'")
   end)
 end)
 
@@ -424,10 +484,40 @@ describe("returning to the review", function()
     error("no jumplist entry for the review")
   end)
 
-  -- Enable once #19 replaces row-removal with real vim folds. Collapsing currently
-  -- rewrites the whole buffer, which destroys vim's position tracking: a jumplist entry
-  -- below the fold is silently clamped, so <C-o> lands on unrelated content.
-  pending("keeps stored positions valid across a fold (needs real folds, #19)")
+  it("keeps stored positions valid across a fold", function()
+    view.open("HEAD", dir)
+    local rbuf = vim.api.nvim_get_current_buf()
+    local rows = view.session().render.rows
+
+    -- park deep in the review, below the file we are about to fold
+    local deep
+    for i = #rows, 1, -1 do
+      if rows[i].kind ~= "header" and (rows[i].new_line or rows[i].old_line) then
+        deep = i
+        break
+      end
+    end
+    local text = vim.api.nvim_buf_get_lines(0, deep - 1, deep, false)[1]
+    vim.api.nvim_win_set_cursor(0, { deep, 0 })
+
+    view.open_file()
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-o>", true, false, true), "nx", false)
+
+    -- fold the first file, which used to shift every row below it
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    view.toggle()
+
+    for i = #vim.fn.getjumplist()[1], 1, -1 do
+      local j = vim.fn.getjumplist()[1][i]
+      if j.bufnr == rbuf then
+        local now = vim.api.nvim_buf_get_lines(rbuf, j.lnum - 1, j.lnum, false)[1]
+        assert.equals(deep, j.lnum, "the entry must not be clamped")
+        assert.equals(text, now, "the row must still hold what it held")
+        return
+      end
+    end
+    error("no jumplist entry for the review")
+  end)
 
   it("close discards the buffer even when the review is hidden", function()
     view.open("HEAD", dir)

@@ -215,14 +215,30 @@ describe("render.review", function()
     end
   end)
 
-  it("omits the body of a collapsed file but keeps its header", function()
-    local full = render.review({ A, B })
-    local folded = render.review({ A, B }, { ["a.lua"] = true })
+  it("always renders every row, so folding cannot invalidate a position", function()
+    local r = render.review({ A, B })
+    local body = 0
+    for _, row in ipairs(r.rows) do
+      if row.kind ~= "header" then
+        body = body + 1
+      end
+    end
+    assert.is_true(body > 0, "bodies are always present; folds hide them, rows are not removed")
+  end)
 
-    assert.is_true(#folded.lines < #full.lines)
-    assert.equals("header", folded.rows[1].kind)
-    assert.equals("a.lua", folded.rows[1].path)
-    assert.equals("header", folded.rows[2].kind, "b.lua header should follow immediately")
+  it("levels the fold so it starts on the pill's bottom border", function()
+    local r = render.review({ A, B })
+    local levels = render.fold_levels(r.rows)
+    assert.equals(#r.rows, #levels)
+
+    for i, row in ipairs(r.rows) do
+      if row.kind == "header" then
+        -- the bottom border opens the fold, so a closed file still shows the pill
+        assert.equals(row.part == "bottom" and ">1" or "0", levels[i], "row " .. i)
+      else
+        assert.equals("1", levels[i], "row " .. i)
+      end
+    end
   end)
 
   it("shows the collapsed chevron only when folded", function()

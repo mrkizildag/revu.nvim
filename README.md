@@ -28,9 +28,14 @@ in. Inside it:
 | Key | Does |
 | --- | --- |
 | `<Tab>` / `za` | Fold the file section under the cursor |
+| `zR` / `zM` | Expand / collapse every file |
 | `]f` / `[f` | Next / previous file |
 | `<CR>` / `gf` | Open the real file at this line |
 | `q` | Hide the review (`:RevuClose` discards it) |
+
+Folding uses real vim folds, so every row still exists when a file is collapsed and stored
+positions stay valid — `zo`, `zc`, `zj`, `zk` and friends all work, and a closed file draws
+its own pill border rather than `+-- 42 lines`.
 
 The review buffer stays alive when you leave it, so `<CR>` into a file, read around, and
 `<C-o>` brings you back to the row you left. `:Revu` again returns to the same review
