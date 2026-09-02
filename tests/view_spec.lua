@@ -102,25 +102,26 @@ describe("view.open", function()
     assert.is_true(l[2]:find("%+%d") > l[2]:find("%.lua"), "counts right of the filename")
   end)
 
-  it("draws +/- in the sign column, outside the text area", function()
+  it("draws +/- inline, under the pill, and not in the buffer text", function()
     view.open("HEAD", dir)
     local buf = vim.api.nvim_get_current_buf()
     local ns = vim.api.nvim_get_namespaces()["revu_diff"]
 
-    local signs, inline = 0, 0
+    local inline = 0
     for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
-      if m[4].sign_text then
-        signs = signs + 1
-      end
       if m[4].virt_text then
+        assert.equals("inline", m[4].virt_text_pos)
         inline = inline + 1
       end
     end
+    assert.is_true(inline > 0, "expected inline markers")
 
-    assert.is_true(signs > 0, "expected +/- in the gutter")
-    assert.equals(0, inline, "nothing inline for the cursor to travel through")
-    assert.equals("yes", vim.wo.signcolumn)
+    -- No gutter, so the marker lines up with the pill's interior rather than sitting two
+    -- cells to its left.
+    assert.equals("no", vim.wo.signcolumn)
+    assert.equals(0, vim.fn.getwininfo(vim.api.nvim_get_current_win())[1].textoff)
 
+    -- Still virtual: yanking a line gives back real code.
     for _, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
       assert.is_nil(l:find("^[+-] "))
     end
@@ -403,6 +404,147 @@ describe("view.set_mode", function()
     view.set_mode("unified")
     assert.equals(buf, vim.api.nvim_get_current_buf())
     assert.equals(1, #vim.api.nvim_tabpage_list_wins(0))
+  end)
+end)
+
+describe("comments", function()
+  local dir
+
+  before_each(function()
+    require("revu.config").setup({})
+    dir = repo_with_changes()
+  end)
+
+  after_each(function()
+    view.close()
+  end)
+
+  local COMMENT_NS = vim.api.nvim_create_namespace("revu_comments")
+
+  --- Add a comment against the first added line, the way M.comment does.
+  local function add(body)
+    local s = view.session()
+    for i, r in ipairs(s.render.rows) do
+      if r.kind == "add" and r.new_line then
+        local file = vim.fn.readfile(s.root .. "/" .. r.path)
+        local c = s.store:add({
+          path = r.path,
+          side = "new",
+          line = r.new_line,
+          anchor = file[r.new_line] or "",
+          context = {},
+          body = body or "needs a guard",
+        })
+        return c, i
+      end
+    end
+  end
+
+  local function cards_in(buf)
+    return vim.api.nvim_buf_get_extmarks(buf, COMMENT_NS, 0, -1, { details = true })
+  end
+
+  it("draws a card under the line it is anchored to", function()
+    view.open("HEAD", dir)
+    local c, row = add()
+    view.set_mode("split")
+    view.set_mode("unified")
+
+    local marks = cards_in(vim.api.nvim_get_current_buf())
+    assert.equals(1, #marks)
+    assert.equals(row - 1, marks[1][2], "card must sit on the anchored row")
+
+    local body = ""
+    for _, vl in ipairs(marks[1][4].virt_lines) do
+      for _, chunk in ipairs(vl) do
+        body = body .. chunk[1]
+      end
+    end
+    assert.is_truthy(body:find(c.body, 1, true))
+  end)
+
+  it("shows the same comment in split mode, on the new side", function()
+    view.open("HEAD", dir)
+    add()
+    view.set_mode("split")
+
+    local s = view.session()
+    assert.equals(1, #cards_in(s.bufs.new), "the addition lives on the new side")
+    assert.equals(0, #cards_in(s.bufs.old))
+  end)
+
+  it("survives a mode round trip", function()
+    view.open("HEAD", dir)
+    add()
+    view.set_mode("split")
+    view.set_mode("unified")
+    assert.equals(1, #cards_in(vim.api.nvim_get_current_buf()))
+  end)
+
+  it("round trips through comments.json", function()
+    view.open("HEAD", dir)
+    local c = add("persisted note")
+
+    local fresh = require("revu.store").new(dir)
+    fresh:load()
+    local found = fresh:get(c.id)
+    assert.is_truthy(found)
+    assert.equals("persisted note", found.body)
+  end)
+
+  it("toggles resolved and reflects it in the card", function()
+    view.open("HEAD", dir)
+    local c, row = add()
+    vim.api.nvim_win_set_cursor(0, { row, 0 })
+
+    view.toggle_resolved()
+    assert.equals("resolved", view.session().store:get(c.id).status)
+
+    local body = ""
+    for _, vl in ipairs(cards_in(vim.api.nvim_get_current_buf())[1][4].virt_lines) do
+      for _, chunk in ipairs(vl) do
+        body = body .. chunk[1]
+      end
+    end
+    assert.is_truthy(body:find("resolved", 1, true))
+  end)
+
+  it("deletes the comment and its card", function()
+    view.open("HEAD", dir)
+    local _, row = add()
+    vim.api.nvim_win_set_cursor(0, { row, 0 })
+
+    view.delete_comment()
+    assert.equals(0, #view.session().store:list())
+    assert.equals(0, #cards_in(vim.api.nvim_get_current_buf()))
+  end)
+
+  it("jumps between commented rows", function()
+    view.open("HEAD", dir)
+    local _, row = add()
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    view.jump_comment(1)
+    assert.equals(row, vim.api.nvim_win_get_cursor(0)[1])
+  end)
+
+  it("lists a comment whose anchor is gone rather than drawing it somewhere wrong", function()
+    view.open("HEAD", dir)
+    local s = view.session()
+    s.store:add({
+      path = "a.lua",
+      side = "new",
+      line = 3,
+      anchor = "this text is nowhere in the file",
+      context = {},
+      body = "orphan",
+    })
+
+    view.set_mode("split")
+    view.set_mode("unified")
+
+    assert.equals(0, #cards_in(vim.api.nvim_get_current_buf()))
+    assert.equals(1, #view.orphans())
+    assert.equals("orphan", view.orphans()[1].body)
   end)
 end)
 

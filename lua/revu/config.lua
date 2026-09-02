@@ -20,17 +20,33 @@ M.defaults = {
     borderchars = { "─", "│", "─", "│", "╭", "╮", "╯", "╰" },
   },
 
-  --- +/- in the sign column, the way gitsigns marks hunks. The gutter is outside the text
-  --- area, so the cursor never travels through them and the code still starts at column 1.
-  signs = {
-    add = "+",
-    delete = "-",
+  --- +/- drawn immediately before each line as inline virtual text, so they sit under the
+  --- pill's interior rather than out in the gutter. Virtual, not buffer content: they
+  --- cannot be selected, yanked or edited, and yanking a line gives back real code.
+  --- Context gets a blank of equal width so the columns line up.
+  prefix = {
+    add = "+ ",
+    delete = "- ",
+    context = "  ",
   },
 
-  --- Inline +/- drawn immediately before each line instead. Off by default: inline virtual
-  --- text occupies screen columns, so moving up and down parks the cursor visually on the
-  --- marker. Set to `{ add = "+ ", delete = "- ", context = "  " }` to use it anyway.
-  prefix = false,
+  --- +/- in the sign column instead, out to the left of everything, the way gitsigns marks
+  --- hunks. Off by default now that the prefix carries the same information inline.
+  --- Set to `{ add = "+", delete = "-" }` to use the gutter as well or instead.
+  signs = false,
+
+  --- Comment cards drawn under the line they are anchored to.
+  comment = {
+    indent = "  ",
+    corner_left = "╭",
+    corner_right = "╮",
+    bottom_left = "╰",
+    bottom_right = "╯",
+    side = "│",
+    fill = "─",
+    open = "●",
+    resolved = "✓",
+  },
 
   --- Linked to existing groups rather than given literal colours, so the plugin inherits
   --- whatever colorscheme is active instead of fighting it.
@@ -44,6 +60,10 @@ M.defaults = {
     RevuHunk = "Comment",
     --- Padding on the side of a split that has no counterpart line.
     RevuFiller = "NonText",
+    RevuCommentBorder = "FloatBorder",
+    RevuCommentBody = "Normal",
+    RevuCommentOpen = "WarningMsg",
+    RevuCommentResolved = "Added",
     -- `Added`/`Removed` are the semantic foreground green and red, unlike DiffAdd and
     -- DiffDelete which are backgrounds meant for whole lines.
     RevuHeaderBorder = "FloatBorder",

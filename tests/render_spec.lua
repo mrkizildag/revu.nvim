@@ -28,39 +28,45 @@ describe("render.unified", function()
     for _, m in ipairs(r.marks) do
       by_row[m.row] = m
     end
-    -- context produces no mark at all now: nothing to highlight, nothing to put in the
-    -- gutter, and no inline prefix by default
-    assert.is_nil(by_row[0], "context row should carry no mark")
+    -- context carries only its alignment prefix; no background highlight
+    assert.is_nil(by_row[0].line_hl, "context must not be background-highlighted")
     assert.equals("RevuDelete", by_row[1].line_hl)
     assert.equals("RevuAdd", by_row[2].line_hl)
-    assert.is_nil(by_row[3])
+    assert.is_nil(by_row[3].line_hl)
   end)
 
-  it("marks changed rows in the sign column and leaves context unmarked", function()
+  it("gives every row an inline prefix, padded so columns line up", function()
     local r = render.unified(FILE)
     local by_row = {}
     for _, m in ipairs(r.marks) do
       by_row[m.row] = m
     end
-    assert.equals("-", by_row[1].sign_text)
-    assert.equals("+", by_row[2].sign_text)
-    assert.is_nil(by_row[0] and by_row[0].sign_text, "context has nothing to mark")
-  end)
+    assert.equals("  ", by_row[0].prefix_text) -- context
+    assert.equals("- ", by_row[1].prefix_text)
+    assert.equals("+ ", by_row[2].prefix_text)
 
-  it("puts no inline prefix in the way of the cursor by default", function()
-    for _, m in ipairs(render.unified(FILE).marks) do
-      assert.is_nil(m.prefix_text)
-    end
-  end)
-
-  it("still supports inline prefixes when configured", function()
-    require("revu.config").setup({ prefix = { add = "+ ", delete = "- ", context = "  " } })
     local widths = {}
-    for _, m in ipairs(render.unified(FILE).marks) do
-      assert.is_truthy(m.prefix_text)
+    for _, m in pairs(by_row) do
       widths[#m.prefix_text] = true
     end
-    assert.equals(1, vim.tbl_count(widths), "prefixes must be the same width")
+    assert.equals(1, vim.tbl_count(widths), "all prefixes must be the same width")
+  end)
+
+  it("puts nothing in the gutter by default, so the marker sits under the pill", function()
+    for _, m in ipairs(render.unified(FILE).marks) do
+      assert.is_nil(m.sign_text)
+    end
+  end)
+
+  it("still supports gutter signs when configured", function()
+    require("revu.config").setup({ signs = { add = "+", delete = "-" } })
+    local found = false
+    for _, m in ipairs(render.unified(FILE).marks) do
+      if m.sign_text then
+        found = true
+      end
+    end
+    assert.is_true(found)
     require("revu.config").setup({})
   end)
 

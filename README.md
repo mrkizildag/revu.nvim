@@ -31,9 +31,20 @@ in. Inside it:
 | `<Tab>` / `za` | Fold the file section under the cursor |
 | `zR` / `zM` | Expand / collapse every file |
 | `gm` | Toggle unified / split (old │ new) |
+| `c` / `<leader>c` | Comment on the line under the cursor |
+| `]c` / `[c` | Next / previous comment |
+| `<leader>x` | Toggle a comment resolved |
+| `<leader>d` | Delete the comment here |
 | `]f` / `[f` | Next / previous file |
 | `<CR>` / `gf` | Open the real file at this line |
 | `q` | Hide the review (`:RevuClose` discards it) |
+
+Comments are anchored to the **working tree**, not to the diff, so they follow the code
+after an agent edits it. A comment whose anchor can no longer be found is listed by
+`:RevuComments` rather than drawn at a line that would be wrong.
+
+`.revu/comments.json` is the source of truth; `.revu/comments.md` is rebuilt on every write
+and is the file to hand an agent.
 
 Split mode renders the *same* parsed diff into two aligned columns, old on the left and new
 on the right. Both sides get exactly the same number of rows — a deletion pads the new side,
@@ -48,10 +59,11 @@ The review buffer stays alive when you leave it, so `<CR>` into a file, read aro
 `<C-o>` brings you back to the row you left. `:Revu` again returns to the same review
 rather than rebuilding it.
 
-`+` and `-` are drawn in the **sign column**, the way gitsigns marks hunks. The gutter is
-outside the text area, so the cursor never travels through them, an empty added line stays
-genuinely empty, and yanking gives back real code rather than diff punctuation. Set
-`prefix = { add = "+ ", delete = "- ", context = "  " }` to draw them inline instead.
+`+` and `-` are drawn as **inline virtual text** immediately before each line, so they sit
+under the pill's interior rather than out in a gutter. They are not buffer content — they
+cannot be selected, yanked or edited, and yanking a line gives back real code. Set
+`signs = { add = "+", delete = "-" }` and `prefix = false` to put them in the sign column
+instead, out to the left of everything, the way gitsigns marks hunks.
 
 ## Planned
 
