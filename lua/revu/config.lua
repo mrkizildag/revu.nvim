@@ -32,6 +32,19 @@ M.defaults = {
   --- marker. Set to `{ add = "+ ", delete = "- ", context = "  " }` to use it anyway.
   prefix = false,
 
+  --- Comment cards drawn under the line they are anchored to.
+  comment = {
+    indent = "  ",
+    corner_left = "╭",
+    corner_right = "╮",
+    bottom_left = "╰",
+    bottom_right = "╯",
+    side = "│",
+    fill = "─",
+    open = "●",
+    resolved = "✓",
+  },
+
   --- Linked to existing groups rather than given literal colours, so the plugin inherits
   --- whatever colorscheme is active instead of fighting it.
   highlights = {
@@ -44,6 +57,10 @@ M.defaults = {
     RevuHunk = "Comment",
     --- Padding on the side of a split that has no counterpart line.
     RevuFiller = "NonText",
+    RevuCommentBorder = "FloatBorder",
+    RevuCommentBody = "Normal",
+    RevuCommentOpen = "WarningMsg",
+    RevuCommentResolved = "Added",
     -- `Added`/`Removed` are the semantic foreground green and red, unlike DiffAdd and
     -- DiffDelete which are backgrounds meant for whole lines.
     RevuHeaderBorder = "FloatBorder",

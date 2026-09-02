@@ -31,9 +31,20 @@ in. Inside it:
 | `<Tab>` / `za` | Fold the file section under the cursor |
 | `zR` / `zM` | Expand / collapse every file |
 | `gm` | Toggle unified / split (old │ new) |
+| `c` / `<leader>c` | Comment on the line under the cursor |
+| `]c` / `[c` | Next / previous comment |
+| `<leader>x` | Toggle a comment resolved |
+| `<leader>d` | Delete the comment here |
 | `]f` / `[f` | Next / previous file |
 | `<CR>` / `gf` | Open the real file at this line |
 | `q` | Hide the review (`:RevuClose` discards it) |
+
+Comments are anchored to the **working tree**, not to the diff, so they follow the code
+after an agent edits it. A comment whose anchor can no longer be found is listed by
+`:RevuComments` rather than drawn at a line that would be wrong.
+
+`.revu/comments.json` is the source of truth; `.revu/comments.md` is rebuilt on every write
+and is the file to hand an agent.
 
 Split mode renders the *same* parsed diff into two aligned columns, old on the left and new
 on the right. Both sides get exactly the same number of rows — a deletion pads the new side,

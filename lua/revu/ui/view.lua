@@ -9,11 +9,14 @@ local diff = require("revu.diff")
 local git = require("revu.git")
 local render = require("revu.ui.render")
 local syntax = require("revu.ui.syntax")
+local card = require("revu.ui.card")
+local anchor_mod = require("revu.anchor")
 
 local M = {}
 
 local NS = vim.api.nvim_create_namespace("revu_diff")
 local SYNTAX_NS = vim.api.nvim_create_namespace("revu_syntax")
+local COMMENT_NS = vim.api.nvim_create_namespace("revu_comments")
 
 ---@type table<integer, { rev: string, root: string, files: revu.File[], collapsed: table<string, boolean>, render: revu.Render, prev_buf: integer|nil }>
 local sessions = {}
@@ -74,6 +77,73 @@ local function text_width(buf)
   return vim.api.nvim_win_get_width(win) - (info and info.textoff or 0)
 end
 
+---Row showing a given source line of a file, or nil.
+---@param rows revu.RenderRow[]
+---@param path string
+---@param side "old"|"new"
+---@param line integer
+---@return integer|nil
+local function row_for(rows, path, side, line)
+  for i, row in ipairs(rows) do
+    if row.path == path and row.kind ~= "header" then
+      local at = (side == "old") and row.old_line or row.new_line
+      if at == line then
+        return i
+      end
+    end
+  end
+  return nil
+end
+
+---Draw every comment that still has a home, and collect the ones that do not.
+---
+---Resolution runs against the working tree, not the diff: a comment follows the code even
+---after an agent has edited it, and an orphan is listed separately rather than drawn at a
+---line we know is wrong.
+---@param buf integer
+---@param rows revu.RenderRow[]
+---@param s table
+local function draw_comments(buf, rows, s)
+  vim.api.nvim_buf_clear_namespace(buf, COMMENT_NS, 0, -1)
+  s.orphans = {}
+  if not s.store then
+    return
+  end
+
+  local width = text_width(buf)
+  local by_row = {}
+
+  local resolved = anchor_mod.resolve_all(s.store:list(), function(path)
+    local full = s.root .. "/" .. path
+    if not vim.uv.fs_stat(full) then
+      return nil
+    end
+    return vim.fn.readfile(full)
+  end)
+
+  for _, a in ipairs(resolved) do
+    if a.state == "orphaned" then
+      table.insert(s.orphans, a.comment)
+    else
+      local moved = anchor_mod.applied(a)
+      local row = row_for(rows, moved.path, moved.side, moved.line)
+      if row then
+        by_row[row] = by_row[row] or {}
+        table.insert(by_row[row], moved)
+      else
+        -- Anchored fine, but that line is not part of this diff -- unchanged code, say.
+        table.insert(s.orphans, moved)
+      end
+    end
+  end
+
+  for row, comments in pairs(by_row) do
+    vim.api.nvim_buf_set_extmark(buf, COMMENT_NS, row - 1, 0, {
+      virt_lines = card.stack(comments, width),
+    })
+  end
+end
+
 ---@param buf integer
 local function draw(buf)
   local s = sessions[buf]
@@ -81,6 +151,7 @@ local function draw(buf)
   s.render = r
   s.levels = render.fold_levels(r.rows)
   paint(buf, r)
+  draw_comments(buf, r.rows, s)
 end
 
 ---`foldexpr` for the review window. Vim calls this per line with `v:lnum`.
@@ -194,6 +265,16 @@ local function set_keymaps(buf)
   end, "previous file")
   map("<CR>", M.open_file, "open the real file here")
   map("gf", M.open_file, "open the real file here")
+  map("c", M.comment, "comment on this line")
+  map("<leader>c", M.comment, "comment on this line")
+  map("]c", function()
+    M.jump_comment(1)
+  end, "next comment")
+  map("[c", function()
+    M.jump_comment(-1)
+  end, "previous comment")
+  map("<leader>x", M.toggle_resolved, "toggle resolved")
+  map("<leader>d", M.delete_comment, "delete comment")
   map("gm", function()
     M.set_mode()
   end, "toggle unified / split")
@@ -283,6 +364,8 @@ function M.open(rev, cwd)
   sessions[buf] = {
     buf = buf,
     mode = "unified",
+    store = require("revu.store").new(root),
+    orphans = {},
     rev = rev,
     root = root,
     files = files,
@@ -455,6 +538,8 @@ function M.set_mode(mode)
     s.split = render.split(s.files, text_width(s.bufs.old))
     paint(s.bufs.old, s.split.old)
     paint(s.bufs.new, s.split.new)
+    draw_comments(s.bufs.old, s.split.old.rows, s)
+    draw_comments(s.bufs.new, s.split.new.rows, s)
 
     -- Equal row counts on both sides, so binding them cannot drift.
     for w, b in pairs({ [win] = s.bufs.old, [right] = s.bufs.new }) do
@@ -489,6 +574,198 @@ function M.set_mode(mode)
       )
     end
   end
+end
+
+---Rows and side for whichever buffer the cursor is in.
+---@param s table
+---@return revu.RenderRow[], "old"|"new"
+local function rows_here(s)
+  if s.mode == "split" then
+    local buf = vim.api.nvim_get_current_buf()
+    if buf == s.bufs.old then
+      return s.split.old.rows, "old"
+    end
+    return s.split.new.rows, "new"
+  end
+  return s.render.rows, "new"
+end
+
+---Redraw whichever buffers are on screen, keeping the cursor.
+---@param s table
+local function redraw(s)
+  local win = vim.api.nvim_get_current_win()
+  local cursor = vim.api.nvim_win_get_cursor(win)
+
+  if s.mode == "split" then
+    draw_comments(s.bufs.old, s.split.old.rows, s)
+    draw_comments(s.bufs.new, s.split.new.rows, s)
+  else
+    draw_comments(s.buf, s.render.rows, s)
+  end
+
+  pcall(vim.api.nvim_win_set_cursor, win, cursor)
+end
+
+---Comment on the line under the cursor.
+function M.comment()
+  local s = current()
+  if not s then
+    return
+  end
+
+  local rows = rows_here(s)
+  local row = rows[vim.api.nvim_win_get_cursor(0)[1]]
+  if not row or row.kind == "header" or row.kind == "filler" then
+    vim.notify("revu: nothing to comment on here", vim.log.levels.WARN)
+    return
+  end
+
+  local side = row.new_line and "new" or "old"
+  local line = row.new_line or row.old_line
+  if not line then
+    return
+  end
+
+  -- Anchor against the working tree, which is what re-anchoring will compare to later --
+  -- not against the diff row, whose text can be a deletion that no longer exists.
+  local full = s.root .. "/" .. row.path
+  local file = vim.uv.fs_stat(full) and vim.fn.readfile(full) or {}
+  local text = file[line] or ""
+
+  local context = {}
+  for i = math.max(line - 2, 1), math.min(line + 2, #file) do
+    if i ~= line then
+      table.insert(context, file[i])
+    end
+  end
+
+  require("revu.ui.compose").open({ title = ("%s:%d"):format(row.path, line) }, function(body)
+    local _, err = s.store:add({
+      path = row.path,
+      side = side,
+      line = line,
+      anchor = text,
+      context = context,
+      body = body,
+    })
+    if err then
+      vim.notify("revu: " .. err, vim.log.levels.ERROR)
+      return
+    end
+    redraw(s)
+  end)
+end
+
+---Comments anchored to the row under the cursor.
+---@param s table
+---@return revu.Comment[]
+local function comments_here(s)
+  local rows = rows_here(s)
+  local row = rows[vim.api.nvim_win_get_cursor(0)[1]]
+  if not row or not row.path then
+    return {}
+  end
+
+  local side = row.new_line and "new" or "old"
+  local line = row.new_line or row.old_line
+  local out = {}
+  for _, c in ipairs(s.store and s.store:list({ path = row.path, side = side }) or {}) do
+    if c.line == line then
+      table.insert(out, c)
+    end
+  end
+  return out
+end
+
+---Flip open/resolved on the comment under the cursor.
+function M.toggle_resolved()
+  local s = current()
+  if not s then
+    return
+  end
+
+  local here = comments_here(s)
+  if #here == 0 then
+    vim.notify("revu: no comment on this line", vim.log.levels.WARN)
+    return
+  end
+
+  for _, c in ipairs(here) do
+    s.store:update(c.id, { status = c.status == "resolved" and "open" or "resolved" })
+  end
+  redraw(s)
+end
+
+---Delete the comment under the cursor.
+function M.delete_comment()
+  local s = current()
+  if not s then
+    return
+  end
+
+  local here = comments_here(s)
+  if #here == 0 then
+    return
+  end
+
+  for _, c in ipairs(here) do
+    s.store:remove(c.id)
+  end
+  redraw(s)
+end
+
+---Move to the next or previous commented row.
+---@param delta integer
+function M.jump_comment(delta)
+  local s = current()
+  if not s then
+    return
+  end
+
+  local rows = rows_here(s)
+  local marked = {}
+  for _, c in ipairs(s.store and s.store:list() or {}) do
+    local row = row_for(rows, c.path, c.side, c.line)
+    if row then
+      marked[row] = true
+    end
+  end
+
+  local sorted = vim.tbl_keys(marked)
+  table.sort(sorted)
+  if #sorted == 0 then
+    vim.notify("revu: no comments", vim.log.levels.INFO)
+    return
+  end
+
+  local at = vim.api.nvim_win_get_cursor(0)[1]
+  local target
+  if delta > 0 then
+    for _, r in ipairs(sorted) do
+      if r > at then
+        target = r
+        break
+      end
+    end
+    target = target or sorted[1]
+  else
+    for i = #sorted, 1, -1 do
+      if sorted[i] < at then
+        target = sorted[i]
+        break
+      end
+    end
+    target = target or sorted[#sorted]
+  end
+
+  pcall(vim.api.nvim_win_set_cursor, 0, { target, 0 })
+end
+
+---Comments that no longer have a home in the working tree.
+---@return revu.Comment[]
+function M.orphans()
+  local s = current()
+  return s and s.orphans or {}
 end
 
 ---Fold or unfold the file section the cursor is in.
