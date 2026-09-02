@@ -390,3 +390,102 @@ describe("cursor landing", function()
     assert.is_nil(render.next_landable(all_borders, 1, 1))
   end)
 end)
+
+describe("render.split", function()
+  local A = parse(
+    "diff --git a/a.lua b/a.lua",
+    "--- a/a.lua",
+    "+++ b/a.lua",
+    "@@ -1,3 +1,3 @@",
+    " keep",
+    "-old one",
+    "-old two",
+    "+new one"
+  )
+
+  it("gives both sides exactly the same number of rows", function()
+    local sp = render.split({ A }, 80)
+    assert.equals(#sp.old.lines, #sp.new.lines)
+    assert.equals(#sp.old.rows, #sp.new.rows)
+  end)
+
+  it("pads the side that has no counterpart", function()
+    local sp = render.split({ A }, 80)
+
+    local kinds = { old = {}, new = {} }
+    for i = 1, #sp.old.rows do
+      if sp.old.rows[i].kind ~= "header" then
+        table.insert(kinds.old, sp.old.rows[i].kind)
+        table.insert(kinds.new, sp.new.rows[i].kind)
+      end
+    end
+
+    assert.same({ "context", "del", "del", "filler" }, kinds.old)
+    assert.same({ "context", "filler", "filler", "add" }, kinds.new)
+  end)
+
+  it("keeps deletions on the old side and additions on the new", function()
+    local sp = render.split({ A }, 80)
+    for i, row in ipairs(sp.old.rows) do
+      assert.are_not.equals("add", row.kind, "an addition must not appear on the old side")
+      assert.are_not.equals(
+        "del",
+        sp.new.rows[i].kind,
+        "a deletion must not appear on the new side"
+      )
+    end
+  end)
+
+  it("numbers each side against its own file", function()
+    local sp = render.split({ A }, 80)
+    for i, row in ipairs(sp.old.rows) do
+      if row.kind == "del" or row.kind == "context" then
+        assert.is_truthy(row.old_line)
+      end
+      local n = sp.new.rows[i]
+      if n.kind == "add" or n.kind == "context" then
+        assert.is_truthy(n.new_line)
+      end
+    end
+  end)
+
+  it("repeats the pill on both sides so the rows stay aligned", function()
+    local sp = render.split({ A }, 80)
+    for i = 1, 3 do
+      assert.equals("header", sp.old.rows[i].kind)
+      assert.equals("header", sp.new.rows[i].kind)
+      assert.equals(sp.old.lines[i], sp.new.lines[i])
+    end
+  end)
+
+  it("stays aligned across several files of different sizes", function()
+    local B = parse(
+      "diff --git a/b.lua b/b.lua",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/b.lua",
+      "@@ -0,0 +1,3 @@",
+      "+one",
+      "+two",
+      "+three"
+    )
+    local sp = render.split({ A, B }, 80)
+    assert.equals(#sp.old.lines, #sp.new.lines)
+    for i = 1, #sp.old.rows do
+      assert.equals(
+        sp.old.rows[i].path,
+        sp.new.rows[i].path,
+        "row " .. i .. " must describe the same file"
+      )
+    end
+  end)
+
+  it("reads the same model the unified view does", function()
+    -- one parse, two renderers: if this ever needs its own parse the model is wrong
+    local files = { A }
+    local unified = render.review(files, 80)
+    local sp = render.split(files, 80)
+    assert.is_truthy(unified.rows[1].path)
+    assert.equals(unified.rows[1].path, sp.old.rows[1].path)
+  end)
+end)

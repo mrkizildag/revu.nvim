@@ -24,22 +24,10 @@ local function current()
   return sessions[buf], buf
 end
 
+---Paint one rendered side into a buffer.
 ---@param buf integer
-local function draw(buf)
-  local s = sessions[buf]
-  -- Size to the TEXT area, not the window: `textoff` is exactly the columns taken by the
-  -- sign, number and fold columns, and a pill sized to the full window overflows by that
-  -- much and wraps off the right edge.
-  local win = vim.fn.bufwinid(buf)
-  local width = vim.o.columns
-  if win ~= -1 then
-    local info = vim.fn.getwininfo(win)[1]
-    width = vim.api.nvim_win_get_width(win) - (info and info.textoff or 0)
-  end
-  local r = render.review(s.files, width)
-  s.levels = render.fold_levels(r.rows)
-  s.render = r
-
+---@param r revu.Render
+local function paint(buf, r)
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, r.lines)
   vim.bo[buf].modifiable = false
@@ -48,8 +36,6 @@ local function draw(buf)
   vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
 
   for _, m in ipairs(r.marks) do
-    -- Header pills colour several ranges on one line: border, dimmed directory, filename,
-    -- then the counts in green and red.
     for _, seg in ipairs(m.segments or {}) do
       vim.api.nvim_buf_set_extmark(buf, NS, m.row, seg.col, {
         end_col = seg.end_col,
@@ -61,7 +47,6 @@ local function draw(buf)
       line_hl_group = m.line_hl,
       sign_text = m.sign_text,
       sign_hl_group = m.sign_hl,
-      -- Inline, so +/- shows but is not selectable and buffer columns still match source.
       virt_text = m.prefix_text and { { m.prefix_text, m.prefix_hl } } or nil,
       virt_text_pos = m.prefix_text and "inline" or nil,
     })
@@ -74,8 +59,28 @@ local function draw(buf)
     })
   end
 
-  -- Separate namespace so a redraw can rebuild syntax without disturbing the diff marks.
   syntax.apply(buf, SYNTAX_NS, r.rows)
+end
+
+---Usable text width of the window showing `buf`, or a sensible default.
+---@param buf integer
+---@return integer
+local function text_width(buf)
+  local win = vim.fn.bufwinid(buf)
+  if win == -1 then
+    return vim.o.columns
+  end
+  local info = vim.fn.getwininfo(win)[1]
+  return vim.api.nvim_win_get_width(win) - (info and info.textoff or 0)
+end
+
+---@param buf integer
+local function draw(buf)
+  local s = sessions[buf]
+  local r = render.review(s.files, text_width(buf))
+  s.render = r
+  s.levels = render.fold_levels(r.rows)
+  paint(buf, r)
 end
 
 ---`foldexpr` for the review window. Vim calls this per line with `v:lnum`.
@@ -189,6 +194,9 @@ local function set_keymaps(buf)
   end, "previous file")
   map("<CR>", M.open_file, "open the real file here")
   map("gf", M.open_file, "open the real file here")
+  map("gm", function()
+    M.set_mode()
+  end, "toggle unified / split")
   map("q", M.hide, "hide the review (:RevuClose to discard it)")
 end
 
@@ -273,6 +281,8 @@ function M.open(rev, cwd)
   vim.bo[buf].filetype = "revu"
 
   sessions[buf] = {
+    buf = buf,
+    mode = "unified",
     rev = rev,
     root = root,
     files = files,
@@ -329,6 +339,156 @@ function M.open(rev, cwd)
   })
 
   return true, nil
+end
+
+---Collapse a split back to one window and drop the side buffers.
+---
+---Both hide() and close() need this: leaving the extra window behind would strand it
+---showing a buffer nobody owns.
+---@param s table
+local function teardown_split(s)
+  if s.mode ~= "split" then
+    return
+  end
+
+  local keep
+  for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    local b = vim.api.nvim_win_get_buf(w)
+    if b == s.bufs.old or b == s.bufs.new then
+      if keep then
+        pcall(vim.api.nvim_win_close, w, true)
+      else
+        keep = w
+      end
+    end
+  end
+
+  if keep and vim.api.nvim_win_is_valid(keep) then
+    vim.api.nvim_set_current_win(keep)
+    vim.api.nvim_win_set_buf(keep, s.buf)
+  end
+
+  for _, b in pairs(s.bufs or {}) do
+    sessions[b] = nil
+    pcall(vim.api.nvim_buf_delete, b, { force = true })
+  end
+  s.bufs = nil
+  s.mode = "unified"
+end
+
+---Where the cursor is, in terms the other mode also understands.
+---@return { path: string, line: integer|nil, side: "old"|"new" }|nil
+local function anchor()
+  local s = current()
+  if not s then
+    return nil
+  end
+
+  local buf = vim.api.nvim_get_current_buf()
+  local rows = (s.mode == "split") and (buf == s.bufs.old and s.split.old.rows or s.split.new.rows)
+    or s.render.rows
+
+  local row = rows[vim.api.nvim_win_get_cursor(0)[1]]
+  if not row or not row.path then
+    return nil
+  end
+  return {
+    path = row.path,
+    line = row.new_line or row.old_line,
+    side = row.new_line and "new" or "old",
+  }
+end
+
+---Row in `rows` showing the same source line, falling back to the file's pill.
+---@param rows revu.RenderRow[]
+---@param a { path: string, line: integer|nil, side: string }
+---@return integer
+local function locate(rows, a)
+  local file_start
+  for i, row in ipairs(rows) do
+    if row.path == a.path then
+      file_start = file_start or i
+      local line = (a.side == "old") and row.old_line or row.new_line
+      if line and line == a.line then
+        return i
+      end
+    end
+  end
+  return file_start or 1
+end
+
+---Swap between unified and split, keeping the cursor on the same source line.
+---@param mode "unified"|"split"|nil  nil toggles
+function M.set_mode(mode)
+  local s = current()
+  if not s then
+    return
+  end
+
+  mode = mode or (s.mode == "split" and "unified" or "split")
+  if mode == s.mode then
+    return
+  end
+
+  local a = anchor()
+  local win = vim.api.nvim_get_current_win()
+
+  if mode == "split" then
+    -- One vertical split; both halves belong to the same session, so a keymap works from
+    -- whichever side the cursor happens to be in.
+    s.bufs =
+      { old = vim.api.nvim_create_buf(false, true), new = vim.api.nvim_create_buf(false, true) }
+    for _, b in pairs(s.bufs) do
+      vim.bo[b].buftype = "nofile"
+      vim.bo[b].bufhidden = "hide"
+      vim.bo[b].swapfile = false
+      vim.bo[b].filetype = "revu"
+      sessions[b] = s
+      set_keymaps(b)
+    end
+
+    vim.api.nvim_win_set_buf(win, s.bufs.old)
+    vim.cmd("vsplit")
+    local right = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_buf(right, s.bufs.new)
+
+    s.split = render.split(s.files, text_width(s.bufs.old))
+    paint(s.bufs.old, s.split.old)
+    paint(s.bufs.new, s.split.new)
+
+    -- Equal row counts on both sides, so binding them cannot drift.
+    for w, b in pairs({ [win] = s.bufs.old, [right] = s.bufs.new }) do
+      vim.api.nvim_win_call(w, function()
+        vim.wo.scrollbind = true
+        vim.wo.cursorbind = true
+        vim.wo.wrap = false
+        vim.wo.number = false
+        vim.wo.signcolumn = "yes"
+        vim.wo.cursorline = true
+        vim.wo.foldenable = false
+      end)
+      local _ = b
+    end
+
+    s.mode = "split"
+    if a then
+      pcall(vim.api.nvim_win_set_cursor, right, { locate(s.split.new.rows, a), 0 })
+    end
+    vim.api.nvim_set_current_win(right)
+  else
+    teardown_split(s)
+
+    vim.wo.foldenable = true
+    draw(s.buf)
+    refresh_chevrons(s.buf)
+    if a then
+      pcall(
+        vim.api.nvim_win_set_cursor,
+        vim.api.nvim_get_current_win(),
+        { locate(s.render.rows, a), 0 }
+      )
+    end
+  end
 end
 
 ---Fold or unfold the file section the cursor is in.
@@ -434,6 +594,8 @@ function M.hide()
     return
   end
 
+  teardown_split(s)
+
   local win = vim.api.nvim_get_current_win()
   s.last_row = vim.api.nvim_win_get_cursor(win)[1]
   vim.cmd("normal! m'")
@@ -460,13 +622,16 @@ function M.close()
     return
   end
 
+  teardown_split(s)
+
+  sessions[s.buf] = nil
   sessions[buf] = nil
   if s.prev_buf and vim.api.nvim_buf_is_valid(s.prev_buf) then
     vim.api.nvim_win_set_buf(vim.api.nvim_get_current_win(), s.prev_buf)
   else
     vim.cmd("enew")
   end
-  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  pcall(vim.api.nvim_buf_delete, s.buf, { force = true })
 end
 
 ---Current session, for tests and modules built on this.

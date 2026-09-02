@@ -31,6 +31,14 @@ function M.setup(opts)
     view.close()
   end, { desc = "Close the review and discard it" })
 
+  vim.api.nvim_create_user_command("RevuSplit", function()
+    view.set_mode("split")
+  end, { desc = "Show the review as old | new" })
+
+  vim.api.nvim_create_user_command("RevuUnified", function()
+    view.set_mode("unified")
+  end, { desc = "Show the review as one combined column" })
+
   vim.api.nvim_create_user_command("RevuHide", function()
     view.hide()
   end, { desc = "Hide the review, keeping it for :Revu to return to" })

@@ -42,6 +42,8 @@ M.defaults = {
     RevuAddPrefix = "DiffAdd",
     RevuDeletePrefix = "DiffDelete",
     RevuHunk = "Comment",
+    --- Padding on the side of a split that has no counterpart line.
+    RevuFiller = "NonText",
     -- `Added`/`Removed` are the semantic foreground green and red, unlike DiffAdd and
     -- DiffDelete which are backgrounds meant for whole lines.
     RevuHeaderBorder = "FloatBorder",

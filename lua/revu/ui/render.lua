@@ -251,6 +251,121 @@ function M.review(files, width)
   return out
 end
 
+---A review as two aligned sides, old on the left and new on the right.
+---
+---Both sides get exactly the same number of rows: a deletion pads the new side, an
+---addition pads the old one. Equal length is what makes `scrollbind` correct rather than
+---approximate -- the two windows cannot drift, even across files of wildly different sizes.
+---
+---Reads the same `revu.File[]` the unified view does. If this ever needs its own parse,
+---the model is wrong.
+---@param files revu.File[]
+---@param width integer|nil  width of ONE side
+---@return { old: revu.Render, new: revu.Render }
+function M.split(files, width)
+  width = width or 80
+
+  local function blank()
+    return { lines = {}, rows = {}, marks = {}, virt = {}, binary = false }
+  end
+  local old, new = blank(), blank()
+
+  ---@param side revu.Render
+  ---@param text string
+  ---@param row revu.RenderRow
+  ---@param mark table|nil
+  local function push(side, text, row, mark)
+    table.insert(side.lines, text)
+    table.insert(side.rows, row)
+    if mark then
+      table.insert(side.marks, vim.tbl_extend("force", mark, { row = #side.lines - 1 }))
+    end
+  end
+
+  ---A row on one side with no counterpart on the other.
+  local function filler(side, path, file_index)
+    push(
+      side,
+      "",
+      { kind = "filler", path = path, file_index = file_index },
+      { line_hl = "RevuFiller" }
+    )
+  end
+
+  for index, file in ipairs(files) do
+    -- The pill goes on both sides so the two stay row-for-row aligned.
+    local parts = { "top", "body", "bottom" }
+    for i, hl_line in ipairs(M.header_lines(file, false, width)) do
+      local row = { kind = "header", part = parts[i], path = file.path, file_index = index }
+      push(old, hl_line.text, vim.deepcopy(row), { segments = hl_line.segments })
+      push(new, hl_line.text, vim.deepcopy(row), { segments = hl_line.segments })
+    end
+
+    if file.binary or #file.hunks == 0 then
+      local text = M.unified(file).lines[1]
+      push(old, text, { kind = "context", path = file.path, file_index = index })
+      push(new, text, { kind = "context", path = file.path, file_index = index })
+    end
+
+    for _, hunk in ipairs(file.hunks) do
+      local header = {
+        row = #old.lines,
+        text = ("@@ -%d +%d @@%s"):format(
+          hunk.old_start,
+          hunk.new_start,
+          hunk.header ~= "" and (" " .. hunk.header) or ""
+        ),
+        hl = "RevuHunk",
+      }
+      table.insert(old.virt, vim.deepcopy(header))
+      table.insert(new.virt, vim.deepcopy(header))
+
+      for _, line in ipairs(hunk.lines) do
+        if line.kind == "context" then
+          push(old, line.text, {
+            kind = "context",
+            path = file.path,
+            file_index = index,
+            old_line = line.old_line,
+          })
+          push(new, line.text, {
+            kind = "context",
+            path = file.path,
+            file_index = index,
+            new_line = line.new_line,
+          })
+        elseif line.kind == "del" then
+          push(old, line.text, {
+            kind = "del",
+            path = file.path,
+            file_index = index,
+            old_line = line.old_line,
+          }, {
+            line_hl = "RevuDelete",
+            sign_text = (config.options.signs or {}).delete,
+            sign_hl = "RevuDeleteSign",
+          })
+          filler(new, file.path, index)
+        else
+          filler(old, file.path, index)
+          push(new, line.text, {
+            kind = "add",
+            path = file.path,
+            file_index = index,
+            new_line = line.new_line,
+          }, {
+            line_hl = "RevuAdd",
+            sign_text = (config.options.signs or {}).add,
+            sign_hl = "RevuAddSign",
+          })
+        end
+      end
+    end
+  end
+
+  return { old = old, new = new }
+end
+
 ---Fold level for each row, in `foldexpr` notation.
 ---
 ---The fold starts on the pill's BOTTOM border rather than the first body row, because vim
