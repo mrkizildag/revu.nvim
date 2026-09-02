@@ -377,7 +377,9 @@ function M.open(rev, cwd)
   -- to `columns` and overflowed by the width of the sign column.
   vim.api.nvim_win_set_buf(vim.api.nvim_get_current_win(), buf)
   vim.wo.number = false
-  vim.wo.signcolumn = "yes"
+  -- No gutter: the inline prefix carries add/delete, and an empty sign column would push
+  -- the pill two cells right of the markers it is supposed to line up with.
+  vim.wo.signcolumn = require("revu.config").options.signs and "yes" or "no"
   vim.wo.wrap = false
   vim.wo.cursorline = true
   vim.wo.foldmethod = "expr"
@@ -548,7 +550,7 @@ function M.set_mode(mode)
         vim.wo.cursorbind = true
         vim.wo.wrap = false
         vim.wo.number = false
-        vim.wo.signcolumn = "yes"
+        vim.wo.signcolumn = require("revu.config").options.signs and "yes" or "no"
         vim.wo.cursorline = true
         vim.wo.foldenable = false
       end)
