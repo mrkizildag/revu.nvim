@@ -32,17 +32,10 @@ function M.setup(opts)
   end, { desc = "Close the review and discard it" })
 
   vim.api.nvim_create_user_command("RevuComments", function()
-    local orphans = view.orphans()
-    if #orphans == 0 then
-      vim.notify("revu: no orphaned comments", vim.log.levels.INFO)
-      return
+    if view.list_comments() == 0 then
+      vim.notify("revu: no comments", vim.log.levels.INFO)
     end
-    local lines = { ("%d comment(s) no longer anchored:"):format(#orphans) }
-    for _, c in ipairs(orphans) do
-      table.insert(lines, ("  %s:%d  %s"):format(c.path, c.line, c.body:gsub("\n", " ")))
-    end
-    vim.notify(table.concat(lines, "\n"), vim.log.levels.WARN)
-  end, { desc = "List comments whose anchor has moved out of reach" })
+  end, { desc = "List every comment in the quickfix list" })
 
   vim.api.nvim_create_user_command("RevuSplit", function()
     view.set_mode("split")

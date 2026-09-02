@@ -117,9 +117,8 @@ describe("view.open", function()
     assert.is_true(inline > 0, "expected inline markers")
 
     -- No gutter, so the marker lines up with the pill's interior rather than sitting two
-    -- cells to its left.
+    -- cells to its left. (Pill width against the text area is covered separately.)
     assert.equals("no", vim.wo.signcolumn)
-    assert.equals(0, vim.fn.getwininfo(vim.api.nvim_get_current_win())[1].textoff)
 
     -- Still virtual: yanking a line gives back real code.
     for _, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
@@ -463,14 +462,35 @@ describe("comments", function()
     assert.is_truthy(body:find(c.body, 1, true))
   end)
 
-  it("shows the same comment in split mode, on the new side", function()
+  --- Height of the virtual lines an extmark contributes, and whether any carry text.
+  local function virt(buf)
+    local height, has_text = 0, false
+    for _, m in ipairs(cards_in(buf)) do
+      for _, vl in ipairs(m[4].virt_lines or {}) do
+        height = height + 1
+        for _, chunk in ipairs(vl) do
+          if chunk[1] ~= "" then
+            has_text = true
+          end
+        end
+      end
+    end
+    return height, has_text
+  end
+
+  it("shows the comment on the new side and pads the old, so the split stays aligned", function()
     view.open("HEAD", dir)
     add()
     view.set_mode("split")
 
     local s = view.session()
-    assert.equals(1, #cards_in(s.bufs.new), "the addition lives on the new side")
-    assert.equals(0, #cards_in(s.bufs.old))
+    local new_h, new_text = virt(s.bufs.new)
+    local old_h, old_text = virt(s.bufs.old)
+
+    assert.is_true(new_text, "the card belongs on the new side")
+    assert.is_false(old_text, "the old side gets blank filler, not a duplicate card")
+    assert.is_true(new_h > 0)
+    assert.equals(new_h, old_h, "both sides must grow by the same number of display lines")
   end)
 
   it("survives a mode round trip", function()
