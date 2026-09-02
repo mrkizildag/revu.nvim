@@ -36,7 +36,8 @@ local function draw(buf)
     local info = vim.fn.getwininfo(win)[1]
     width = vim.api.nvim_win_get_width(win) - (info and info.textoff or 0)
   end
-  local r = render.review(s.files, s.collapsed, width)
+  local r = render.review(s.files, width)
+  s.levels = render.fold_levels(r.rows)
   s.render = r
 
   vim.bo[buf].modifiable = true
@@ -77,6 +78,67 @@ local function draw(buf)
   syntax.apply(buf, SYNTAX_NS, r.rows)
 end
 
+---`foldexpr` for the review window. Vim calls this per line with `v:lnum`.
+---@return string
+function M.foldexpr()
+  local s = sessions[vim.api.nvim_get_current_buf()]
+  return (s and s.levels and s.levels[vim.v.lnum]) or "0"
+end
+
+---`foldtext` for the review window: the pill's bottom border verbatim.
+---
+---Vim always shows one line for a closed fold, and the fold begins on that border, so a
+---closed file reads exactly like a collapsed pill instead of "+-- 42 lines".
+---@return string
+function M.foldtext()
+  return vim.fn.getline(vim.v.foldstart)
+end
+
+---Rewrite the chevron on each pill so it matches the fold state.
+---
+---Only the header text changes and the row count does not, so positions stay valid --
+---which is the whole reason for using folds rather than removing rows.
+---@param buf integer
+local function refresh_chevrons(buf)
+  local s = sessions[buf]
+  local win = vim.fn.bufwinid(buf)
+  if not s or win == -1 then
+    return
+  end
+
+  local width = vim.api.nvim_win_get_width(win) - (vim.fn.getwininfo(win)[1] or {}).textoff
+  vim.bo[buf].modifiable = true
+
+  for i, row in ipairs(s.render.rows) do
+    if row.kind == "header" and row.part == "body" then
+      local closed = vim.fn.foldclosed(i + 1) ~= -1 -- the fold starts on the row below
+      local lines = render.header_lines(s.files[row.file_index], closed, width)
+      vim.api.nvim_buf_set_lines(buf, i - 1, i, false, { lines[2].text })
+      vim.api.nvim_buf_clear_namespace(buf, NS, i - 1, i)
+      for _, seg in ipairs(lines[2].segments) do
+        vim.api.nvim_buf_set_extmark(buf, NS, i - 1, seg.col, {
+          end_col = seg.end_col,
+          hl_group = seg.hl,
+        })
+      end
+    end
+  end
+
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].modified = false
+end
+
+---Run a native fold command, then bring the chevrons back in step.
+---@param cmd string
+local function fold_cmd(cmd)
+  local buf = vim.api.nvim_get_current_buf()
+  if not sessions[buf] then
+    return
+  end
+  pcall(vim.cmd, "normal! " .. cmd)
+  refresh_chevrons(buf)
+end
+
 ---Keep the cursor off pill borders.
 ---
 ---Done on CursorMoved rather than by remapping motions: one handler covers j, k, }, G,
@@ -113,6 +175,12 @@ local function set_keymaps(buf)
 
   map("<Tab>", M.toggle, "toggle file section")
   map("za", M.toggle, "toggle file section")
+  map("zR", function()
+    M.toggle_all(true)
+  end, "expand every file")
+  map("zM", function()
+    M.toggle_all(false)
+  end, "collapse every file")
   map("]f", function()
     M.jump_file(1)
   end, "next file")
@@ -208,7 +276,6 @@ function M.open(rev, cwd)
     rev = rev,
     root = root,
     files = files,
-    collapsed = {},
     prev_buf = vim.api.nvim_buf_is_valid(prev_buf) and prev_buf or nil,
   }
 
@@ -220,6 +287,12 @@ function M.open(rev, cwd)
   vim.wo.signcolumn = "yes"
   vim.wo.wrap = false
   vim.wo.cursorline = true
+  vim.wo.foldmethod = "expr"
+  vim.wo.foldexpr = "v:lua.require'revu.ui.view'.foldexpr()"
+  vim.wo.foldtext = "v:lua.require'revu.ui.view'.foldtext()"
+  vim.wo.foldlevel = 99
+  vim.wo.foldenable = true
+  vim.wo.fillchars = "fold: "
 
   draw(buf)
   set_keymaps(buf)
@@ -267,19 +340,27 @@ function M.toggle()
 
   local row = vim.api.nvim_win_get_cursor(0)[1]
   local entry = s.render.rows[row]
-  if not entry or not entry.path then
+  if not entry or not entry.file_index then
     return
   end
 
-  s.collapsed[entry.path] = not s.collapsed[entry.path]
-  draw(buf)
-
-  -- Land back on the header of the file just toggled, so repeated toggles stay put rather
-  -- than drifting as the section above changes height.
+  -- The fold begins on the pill's bottom border, so aim there wherever the cursor is.
   local header = render.header_row(s.render, entry.file_index)
+  local start = header and header + 1 or row
+  local closed = vim.fn.foldclosed(start) ~= -1
+
+  pcall(vim.cmd, ("%d%s"):format(start, closed and "foldopen" or "foldclose"))
+  refresh_chevrons(buf)
+
   if header then
-    vim.api.nvim_win_set_cursor(0, { header, 0 })
+    pcall(vim.api.nvim_win_set_cursor, 0, { header, 0 })
   end
+end
+
+---Open or close every file at once.
+---@param open boolean
+function M.toggle_all(open)
+  fold_cmd(open and "zR" or "zM")
 end
 
 ---Move to the next or previous file header.

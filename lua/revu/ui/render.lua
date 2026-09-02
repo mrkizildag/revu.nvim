@@ -205,22 +205,18 @@ end
 
 ---Render a whole review: every file in one buffer, each behind a header row.
 ---@param files revu.File[]
----@param collapsed table<string, boolean>|nil  paths that are folded shut
 ---@param width integer|nil  window width the header pills should fill
 ---@return revu.Render
-function M.review(files, collapsed, width)
-  collapsed = collapsed or {}
+function M.review(files, width)
   width = width or 80
   local out = { lines = {}, rows = {}, marks = {}, virt = {}, binary = false }
 
   for index, file in ipairs(files) do
-    local is_collapsed = collapsed[file.path] == true
-
     -- Three rows per pill, all tagged `header` so folding works from any of them. `part`
     -- distinguishes the content row from its borders, which is what lets the cursor skip
     -- the borders and what header_row aims at.
     local parts = { "top", "body", "bottom" }
-    for i, hl_line in ipairs(M.header_lines(file, is_collapsed, width)) do
+    for i, hl_line in ipairs(M.header_lines(file, false, width)) do
       table.insert(out.lines, hl_line.text)
       table.insert(out.rows, {
         kind = "header",
@@ -231,25 +227,49 @@ function M.review(files, collapsed, width)
       table.insert(out.marks, { row = #out.lines - 1, segments = hl_line.segments })
     end
 
-    if not is_collapsed then
-      local body = M.unified(file)
-      local offset = #out.lines
+    local body = M.unified(file)
+    local offset = #out.lines
 
-      for i, line in ipairs(body.lines) do
-        table.insert(out.lines, line)
-        local r = vim.tbl_extend("force", body.rows[i], { path = file.path, file_index = index })
-        table.insert(out.rows, r)
-      end
-      for _, m in ipairs(body.marks) do
-        table.insert(out.marks, vim.tbl_extend("force", m, { row = m.row + offset }))
-      end
-      for _, v in ipairs(body.virt) do
-        table.insert(out.virt, vim.tbl_extend("force", v, { row = v.row + offset }))
-      end
+    for i, line in ipairs(body.lines) do
+      table.insert(out.lines, line)
+      table.insert(
+        out.rows,
+        vim.tbl_extend("force", body.rows[i], {
+          path = file.path,
+          file_index = index,
+        })
+      )
+    end
+    for _, m in ipairs(body.marks) do
+      table.insert(out.marks, vim.tbl_extend("force", m, { row = m.row + offset }))
+    end
+    for _, v in ipairs(body.virt) do
+      table.insert(out.virt, vim.tbl_extend("force", v, { row = v.row + offset }))
     end
   end
 
   return out
+end
+
+---Fold level for each row, in `foldexpr` notation.
+---
+---The fold starts on the pill's BOTTOM border rather than the first body row, because vim
+---always shows one line for a closed fold. Making that line the bottom border means a
+---closed file looks exactly like the collapsed pill did, while every row still exists --
+---which is the point: removing rows destroyed vim's position tracking, so marks and
+---jumplist entries below a fold were silently invalidated.
+---@param rows revu.RenderRow[]
+---@return string[]  parallel to rows
+function M.fold_levels(rows)
+  local levels = {}
+  for i, row in ipairs(rows) do
+    if row.kind == "header" then
+      levels[i] = row.part == "bottom" and ">1" or "0"
+    else
+      levels[i] = "1"
+    end
+  end
+  return levels
 end
 
 ---Buffer row to put the cursor on for `file_index`: the middle row of the pill, where the
