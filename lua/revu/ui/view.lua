@@ -95,52 +95,106 @@ local function row_for(rows, path, side, line)
   return nil
 end
 
----Draw every comment that still has a home, and collect the ones that do not.
+---Resolve the store against the working tree.
 ---
----Resolution runs against the working tree, not the diff: a comment follows the code even
----after an agent has edited it, and an orphan is listed separately rather than drawn at a
+---Resolution runs against the file, not the diff: a comment follows code an agent has
+---since edited, and one that cannot be found is returned separately rather than drawn at a
 ---line we know is wrong.
----@param buf integer
----@param rows revu.RenderRow[]
 ---@param s table
-local function draw_comments(buf, rows, s)
-  vim.api.nvim_buf_clear_namespace(buf, COMMENT_NS, 0, -1)
-  s.orphans = {}
+---@return revu.Comment[] placed, revu.Comment[] orphaned
+local function resolve_comments(s)
+  local placed, orphaned = {}, {}
   if not s.store then
-    return
+    return placed, orphaned
   end
 
-  local width = text_width(buf)
-  local by_row = {}
-
-  local resolved = anchor_mod.resolve_all(s.store:list(), function(path)
-    local full = s.root .. "/" .. path
-    if not vim.uv.fs_stat(full) then
-      return nil
-    end
-    return vim.fn.readfile(full)
-  end)
-
-  for _, a in ipairs(resolved) do
+  for _, a in
+    ipairs(anchor_mod.resolve_all(s.store:list(), function(path)
+      local full = s.root .. "/" .. path
+      return vim.uv.fs_stat(full) and vim.fn.readfile(full) or nil
+    end))
+  do
     if a.state == "orphaned" then
-      table.insert(s.orphans, a.comment)
+      table.insert(orphaned, a.comment)
     else
-      local moved = anchor_mod.applied(a)
-      local row = row_for(rows, moved.path, moved.side, moved.line)
-      if row then
-        by_row[row] = by_row[row] or {}
-        table.insert(by_row[row], moved)
-      else
-        -- Anchored fine, but that line is not part of this diff -- unchanged code, say.
-        table.insert(s.orphans, moved)
+      table.insert(placed, anchor_mod.applied(a))
+    end
+  end
+
+  return placed, orphaned
+end
+
+---Draw comment cards, and on a split, matching blank lines on the opposite side.
+---
+---A card is virtual lines, which push the display down without changing the buffer. On a
+---split that desynchronises the two windows: scrollbind binds buffer lines, so a card on
+---one side drifts everything below it out of step with the other. The two sides are
+---row-for-row aligned by construction, so the counterpart is simply the same row index --
+---no diff mapping needed.
+---@param s table
+local function draw_comments(s)
+  local placed, orphaned = resolve_comments(s)
+  s.orphans = orphaned
+
+  local targets
+  if s.mode == "split" and s.bufs then
+    targets = {
+      { buf = s.bufs.old, rows = s.split.old.rows, drawn = {} },
+      { buf = s.bufs.new, rows = s.split.new.rows, drawn = {} },
+    }
+  else
+    targets = { { buf = s.buf, rows = s.render.rows, drawn = {} } }
+  end
+
+  local heights = {}
+
+  for _, t in ipairs(targets) do
+    if vim.api.nvim_buf_is_valid(t.buf) then
+      vim.api.nvim_buf_clear_namespace(t.buf, COMMENT_NS, 0, -1)
+
+      local by_row = {}
+      for _, c in ipairs(placed) do
+        local row = row_for(t.rows, c.path, c.side, c.line)
+        if row then
+          by_row[row] = by_row[row] or {}
+          table.insert(by_row[row], c)
+        end
+      end
+
+      local width = text_width(t.buf)
+      for row, comments in pairs(by_row) do
+        local lines = card.stack(comments, width)
+        t.drawn[row] = #lines
+        heights[row] = math.max(heights[row] or 0, #lines)
+        vim.api.nvim_buf_set_extmark(t.buf, COMMENT_NS, row - 1, 0, {
+          virt_lines = lines,
+          virt_lines_above = false,
+        })
       end
     end
   end
 
-  for row, comments in pairs(by_row) do
-    vim.api.nvim_buf_set_extmark(buf, COMMENT_NS, row - 1, 0, {
-      virt_lines = card.stack(comments, width),
-    })
+  if #targets < 2 then
+    return
+  end
+
+  -- Pad whichever side is shorter at each commented row, so the two stay in step.
+  for _, t in ipairs(targets) do
+    if vim.api.nvim_buf_is_valid(t.buf) then
+      for row, height in pairs(heights) do
+        local own = t.drawn[row] or 0
+        if own < height then
+          local blanks = {}
+          for _ = 1, height - own do
+            table.insert(blanks, { { "", "Normal" } })
+          end
+          vim.api.nvim_buf_set_extmark(t.buf, COMMENT_NS, row - 1, 0, {
+            virt_lines = blanks,
+            virt_lines_above = false,
+          })
+        end
+      end
+    end
   end
 end
 
@@ -151,7 +205,7 @@ local function draw(buf)
   s.render = r
   s.levels = render.fold_levels(r.rows)
   paint(buf, r)
-  draw_comments(buf, r.rows, s)
+  draw_comments(s)
 end
 
 ---`foldexpr` for the review window. Vim calls this per line with `v:lnum`.
@@ -275,6 +329,7 @@ local function set_keymaps(buf)
   end, "previous comment")
   map("<leader>x", M.toggle_resolved, "toggle resolved")
   map("<leader>d", M.delete_comment, "delete comment")
+  map("<leader>l", M.list_comments, "list comments in the quickfix list")
   map("gm", function()
     M.set_mode()
   end, "toggle unified / split")
@@ -540,8 +595,10 @@ function M.set_mode(mode)
     s.split = render.split(s.files, text_width(s.bufs.old))
     paint(s.bufs.old, s.split.old)
     paint(s.bufs.new, s.split.new)
-    draw_comments(s.bufs.old, s.split.old.rows, s)
-    draw_comments(s.bufs.new, s.split.new.rows, s)
+
+    -- Before drawing: draw_comments picks its target buffers from s.mode.
+    s.mode = "split"
+    draw_comments(s)
 
     -- Equal row counts on both sides, so binding them cannot drift.
     for w, b in pairs({ [win] = s.bufs.old, [right] = s.bufs.new }) do
@@ -557,7 +614,6 @@ function M.set_mode(mode)
       local _ = b
     end
 
-    s.mode = "split"
     if a then
       pcall(vim.api.nvim_win_set_cursor, right, { locate(s.split.new.rows, a), 0 })
     end
@@ -598,12 +654,7 @@ local function redraw(s)
   local win = vim.api.nvim_get_current_win()
   local cursor = vim.api.nvim_win_get_cursor(win)
 
-  if s.mode == "split" then
-    draw_comments(s.bufs.old, s.split.old.rows, s)
-    draw_comments(s.bufs.new, s.split.new.rows, s)
-  else
-    draw_comments(s.buf, s.render.rows, s)
-  end
+  draw_comments(s)
 
   pcall(vim.api.nvim_win_set_cursor, win, cursor)
 end
@@ -768,6 +819,22 @@ end
 function M.orphans()
   local s = current()
   return s and s.orphans or {}
+end
+
+---Put every comment in the quickfix list and open it.
+---@return integer count
+function M.list_comments()
+  local s = current()
+  if not s or not s.store then
+    return 0
+  end
+
+  local placed, orphaned = resolve_comments(s)
+  local count = require("revu.ui.qf").populate(s.root, placed, orphaned)
+  if count > 0 then
+    vim.cmd("copen")
+  end
+  return count
 end
 
 ---Fold or unfold the file section the cursor is in.

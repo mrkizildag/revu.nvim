@@ -61,3 +61,50 @@ describe("card.lines", function()
     assert.is_true(vim.fn.strdisplaywidth(text_of(lines[1])) >= 24)
   end)
 end)
+
+describe("compose", function()
+  local compose = require("revu.ui.compose")
+
+  it("submits on :w rather than rejecting it", function()
+    local got
+    local buf = compose.open({ title = "t" }, function(text)
+      got = text
+    end)
+    assert.equals("acwrite", vim.bo[buf].buftype)
+
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "a note" })
+    vim.cmd("stopinsert")
+    vim.cmd("write")
+    assert.equals("a note", got)
+  end)
+
+  it("keeps indentation and internal blanks, drops trailing ones", function()
+    local got
+    local buf = compose.open({}, function(text)
+      got = text
+    end)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "  indented", "", "second", "", "" })
+    vim.cmd("stopinsert")
+    vim.cmd("write")
+    assert.equals("  indented\n\nsecond", got)
+  end)
+
+  it("does not fire on an empty body", function()
+    local fired = false
+    local buf = compose.open({}, function()
+      fired = true
+    end)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "", "  " })
+    vim.cmd("stopinsert")
+    vim.cmd("write")
+    assert.is_false(fired)
+  end)
+
+  it("wraps, so a long comment stays readable in a narrow float", function()
+    local buf, win = compose.open({}, function() end)
+    assert.is_true(vim.wo[win].wrap)
+    vim.cmd("stopinsert")
+    pcall(vim.api.nvim_win_close, win, true)
+    local _ = buf
+  end)
+end)

@@ -35,13 +35,17 @@ in. Inside it:
 | `]c` / `[c` | Next / previous comment |
 | `<leader>x` | Toggle a comment resolved |
 | `<leader>d` | Delete the comment here |
+| `<leader>l` | List every comment in the quickfix list |
 | `]f` / `[f` | Next / previous file |
 | `<CR>` / `gf` | Open the real file at this line |
 | `q` | Hide the review (`:RevuClose` discards it) |
 
 Comments are anchored to the **working tree**, not to the diff, so they follow the code
-after an agent edits it. A comment whose anchor can no longer be found is listed by
-`:RevuComments` rather than drawn at a line that would be wrong.
+after an agent edits it. A comment whose anchor can no longer be found is marked `[stale]`
+in `:RevuComments` rather than drawn at a line that would be wrong.
+
+The composer submits on `:w` (or `<C-s>`) and asks before discarding text. In split mode a
+card is matched by blank filler on the opposite side, so the two halves stay in step.
 
 `.revu/comments.json` is the source of truth; `.revu/comments.md` is rebuilt on every write
 and is the file to hand an agent.
